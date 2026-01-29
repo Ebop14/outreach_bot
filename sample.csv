@@ -1,0 +1,4 @@
+email,first_name,last_name,company,website,title
+john.smith@acme.com,John,Smith,Acme Corp,acme.com,VP of Engineering
+sarah.jones@techstartup.io,Sarah,Jones,TechStartup,techstartup.io,CTO
+mike.wilson@bigcorp.com,Mike,Wilson,BigCorp Industries,bigcorp.com,Director of Technology
