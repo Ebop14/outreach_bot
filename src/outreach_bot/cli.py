@@ -31,7 +31,7 @@ console = Console()
 
 def load_contacts(csv_path: Path) -> list[Contact]:
     """Load contacts from CSV file."""
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, encoding='utf-8')
     contacts = []
     for idx, row in df.iterrows():
         contact = Contact.from_dict(row.to_dict(), row_index=idx)
@@ -78,7 +78,7 @@ def run(
 async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, resume: bool, skip_evaluation: bool):
     """Async implementation of run command."""
     # Load original CSV as DataFrame to preserve all columns
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, encoding='utf-8')
 
     # Load contacts
     contacts = load_contacts(csv_path)
@@ -186,7 +186,7 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                         await cache.set_progress(csv_hash, i, len(contacts))
 
                         # Save CSV after each contact for safety
-                        df.to_csv(output_path, index=False)
+                        df.to_csv(output_path, index=False, encoding='utf-8')
 
                     except Exception as e:
                         console.print(f"[red]Error processing {contact.email}: {e}[/red]")
@@ -198,7 +198,7 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
             await cache.clear_progress(csv_hash)
 
     # Final save
-    df.to_csv(output_path, index=False)
+    df.to_csv(output_path, index=False, encoding='utf-8')
 
     # Summary
     console.print()
