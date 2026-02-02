@@ -1,4 +1,6 @@
-email,first_name,last_name,company,website,title
-john.smith@acme.com,John,Smith,Acme Corp,acme.com,VP of Engineering
-sarah.jones@techstartup.io,Sarah,Jones,TechStartup,techstartup.io,CTO
-mike.wilson@bigcorp.com,Mike,Wilson,BigCorp Industries,bigcorp.com,Director of Technology
+email,first_name,last_name,company,website,sender_name,sender_company
+john@riverspan.com,John,Gilligan,Riverspan Partners,riverspan.com,Eric Child,Snaptask
+bburns@lrpartners.com,Benjamin,Burns,Lime Rock Partners,lrpartners.com,Eric Child,Snaptask
+ken@tvvcapital.com,Ken,Weaver,TVV Capital,tvvcapital.com,Eric Child,Snaptask
+charlie@s3vc.com,Charlie,Plauche,S3 Ventures,s3vc.com,Eric Child,Snaptask
+ckersey@havencrest.com,Christopher,Kersey,Havencrest Capital Management,havencrest.com,Eric Child,Snaptask
