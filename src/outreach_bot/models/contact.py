@@ -14,6 +14,8 @@ class Contact:
     company: str
     website: str
     title: Optional[str] = None
+    sender_name: Optional[str] = None
+    sender_company: Optional[str] = None
     row_index: int = 0
 
     @property
@@ -56,5 +58,7 @@ class Contact:
             company=get_field(["company", "Company", "COMPANY", "organization"]),
             website=get_field(["website", "Website", "WEBSITE", "url", "URL", "domain"]),
             title=get_field(["title", "Title", "TITLE", "job_title", "position"]) or None,
+            sender_name=get_field(["sender_name", "Sender Name", "from_name", "your_name"]) or None,
+            sender_company=get_field(["sender_company", "Sender Company", "from_company", "your_company"]) or None,
             row_index=row_index,
         )

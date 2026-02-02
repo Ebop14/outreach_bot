@@ -16,9 +16,7 @@ class TemplateManager:
 
     # Value propositions to include in emails
     VALUE_PROPS = """
-I build AI solutions for workflow automation. My focus is practical implementations that save time and money.
-
-I can share examples from similar work.
+I recently left Ramp, where my work saved $3M annually with an internal workflow. My co-founder built an sales tool that turned a 12-month process into a 2 day one. 
 """.strip()
 
     # Email subject templates
@@ -28,13 +26,13 @@ I can share examples from similar work.
         "Helping {company} with AI automation",
     ]
 
-    # Closing template
-    CLOSING = """
-Let me know if you'd like to chat.
+    # Closing template (placeholders will be replaced with CSV values if available)
+    CLOSING_TEMPLATE = """
+Let me know if you'd like to chat. I think we could save a lot of time and money for your team.
 
 Best,
-[Your Name]
-[Your Company]
+{sender_name}
+{sender_company}
 """.strip()
 
     def get_fallback_opener(self, contact: Contact, variation: int = 0) -> str:
@@ -54,9 +52,15 @@ Best,
         """Get the value propositions section."""
         return self.VALUE_PROPS
 
-    def get_closing(self) -> str:
-        """Get the email closing."""
-        return self.CLOSING
+    def get_closing(self, contact: Contact) -> str:
+        """Get the email closing with sender info from contact."""
+        sender_name = contact.sender_name or "[Your Name]"
+        sender_company = contact.sender_company or "Snaptask"
+
+        return self.CLOSING_TEMPLATE.format(
+            sender_name=sender_name,
+            sender_company=sender_company
+        )
 
     def assemble_email(
         self,
@@ -83,7 +87,7 @@ Best,
             "",
             self.get_value_props(),
             "",
-            self.get_closing(),
+            self.get_closing(contact),
         ]
 
         body = "\n".join(body_parts)
