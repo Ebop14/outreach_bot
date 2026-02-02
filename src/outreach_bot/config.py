@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # AI settings (Grok models)
     ai_model: str = "grok-3-latest"
+    ai_model_fast: str = "grok-3-fast-latest"  # Used for quick tasks like blog finding
     ai_model_dry_run: str = "grok-3-fast-latest"
     ai_max_tokens: int = 256
 
