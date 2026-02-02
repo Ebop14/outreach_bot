@@ -91,12 +91,16 @@ Your contacts CSV should have these columns:
 - `company` - Company name
 - `website` - Company website (domain or full URL)
 - `title` (optional) - Job title
+- `sender_name` (optional) - Your name for email signature
+- `sender_company` (optional) - Your company name for email signature
 
 Example:
 ```csv
-email,first_name,last_name,company,website,title
-john@acme.com,John,Smith,Acme Corp,acme.com,VP Engineering
+email,first_name,last_name,company,website,title,sender_name,sender_company
+john@acme.com,John,Smith,Acme Corp,acme.com,VP Engineering,Jane Doe,Tech Solutions
 ```
+
+If `sender_name` or `sender_company` are not provided, they default to "[Your Name]" and "Snaptask" respectively.
 
 ### Dry Run Mode
 
