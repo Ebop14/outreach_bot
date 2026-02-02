@@ -11,15 +11,12 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 
-from outreach_bot.config import get_settings
 from outreach_bot.models.contact import Contact
-from outreach_bot.models.context import ContextQuality
 from outreach_bot.scraper.fetcher import Fetcher
 from outreach_bot.cache.sqlite_cache import SQLiteCache
 from outreach_bot.analyzer.context_analyzer import ContextAnalyzer
 from outreach_bot.generator.email_generator import EmailGenerator
 from outreach_bot.gmail.auth import GmailAuth
-from outreach_bot.gmail.draft_creator import DraftCreator
 from outreach_bot.dry_run.parallel_tester import ParallelTester
 
 app = typer.Typer(
@@ -51,20 +48,26 @@ def get_csv_hash(csv_path: Path) -> str:
 def run(
     csv_path: Path = typer.Argument(..., help="Path to contacts CSV file"),
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Process only first N contacts"),
-    skip_gmail: bool = typer.Option(False, "--skip-gmail", help="Generate emails without creating drafts"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output CSV path (default: input_with_emails.csv)"),
     resume: bool = typer.Option(True, "--resume/--no-resume", help="Resume from last progress"),
+    skip_evaluation: bool = typer.Option(False, "--skip-evaluation", help="Skip quality evaluation"),
 ):
-    """Process contacts and create Gmail drafts."""
+    """Process contacts and generate emails, writing results to CSV."""
     if not csv_path.exists():
         console.print(f"[red]Error: CSV file not found: {csv_path}[/red]")
         raise typer.Exit(1)
 
-    asyncio.run(_run_async(csv_path, limit, skip_gmail, resume))
+    # Default output path
+    if output is None:
+        output = csv_path.parent / f"{csv_path.stem}_with_emails.csv"
+
+    asyncio.run(_run_async(csv_path, limit, output, resume, skip_evaluation))
 
 
-async def _run_async(csv_path: Path, limit: Optional[int], skip_gmail: bool, resume: bool):
+async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, resume: bool, skip_evaluation: bool):
     """Async implementation of run command."""
-    settings = get_settings()
+    # Load original CSV as DataFrame to preserve all columns
+    df = pd.read_csv(csv_path)
 
     # Load contacts
     contacts = load_contacts(csv_path)
@@ -74,8 +77,23 @@ async def _run_async(csv_path: Path, limit: Optional[int], skip_gmail: bool, res
 
     if limit:
         contacts = contacts[:limit]
+        df = df.iloc[:limit].copy()
 
     csv_hash = get_csv_hash(csv_path)
+
+    # Initialize new columns if they don't exist
+    if "generated_subject" not in df.columns:
+        df["generated_subject"] = ""
+    if "generated_body" not in df.columns:
+        df["generated_body"] = ""
+    if "ai_generated" not in df.columns:
+        df["ai_generated"] = ""
+    if "quality_score" not in df.columns:
+        df["quality_score"] = ""
+    if "quality_acceptable" not in df.columns:
+        df["quality_acceptable"] = ""
+    if "quality_issues" not in df.columns:
+        df["quality_issues"] = ""
 
     # Initialize components
     async with SQLiteCache() as cache:
@@ -92,16 +110,7 @@ async def _run_async(csv_path: Path, limit: Optional[int], skip_gmail: bool, res
 
         async with Fetcher() as fetcher:
             analyzer = ContextAnalyzer(fetcher, cache)
-            generator = EmailGenerator()
-
-            # Gmail setup if needed
-            draft_creator = None
-            if not skip_gmail:
-                auth = GmailAuth()
-                if not auth.is_authenticated():
-                    console.print("[red]Gmail not authenticated. Run 'outreach setup-gmail' first.[/red]")
-                    return
-                draft_creator = DraftCreator(auth)
+            generator = EmailGenerator(enable_evaluation=not skip_evaluation)
 
             # Process contacts
             with Progress(
@@ -116,7 +125,13 @@ async def _run_async(csv_path: Path, limit: Optional[int], skip_gmail: bool, res
                     total=len(contacts) - start_index,
                 )
 
-                results_summary = {"success": 0, "flagged": 0, "errors": 0}
+                results_summary = {
+                    "success": 0,
+                    "flagged": 0,
+                    "errors": 0,
+                    "quality_passed": 0,
+                    "quality_failed": 0,
+                }
 
                 for i, contact in enumerate(contacts[start_index:], start=start_index):
                     progress.update(
@@ -131,30 +146,36 @@ async def _run_async(csv_path: Path, limit: Optional[int], skip_gmail: bool, res
                         # Generate email
                         email = generator.generate_email(contact, context)
 
-                        # Create draft if not skipping
-                        if draft_creator:
-                            draft_id, error = draft_creator.create_draft(email)
-                            if error:
-                                console.print(f"[red]Draft error for {contact.email}: {error}[/red]")
-                                results_summary["errors"] += 1
-                            else:
-                                email.draft_id = draft_id
-                                if email.is_flagged:
-                                    results_summary["flagged"] += 1
-                                else:
-                                    results_summary["success"] += 1
-                        else:
-                            # Just count as success if skipping gmail
-                            if email.is_flagged:
-                                results_summary["flagged"] += 1
-                            else:
-                                results_summary["success"] += 1
+                        # Write to DataFrame
+                        df.at[contact.row_index, "generated_subject"] = email.subject
+                        df.at[contact.row_index, "generated_body"] = email.body
+                        df.at[contact.row_index, "ai_generated"] = email.used_ai_opener
 
-                        # Save email record
+                        # Add evaluation results if available
+                        if email.evaluation:
+                            df.at[contact.row_index, "quality_score"] = email.evaluation.quality_score
+                            df.at[contact.row_index, "quality_acceptable"] = email.evaluation.is_acceptable
+                            df.at[contact.row_index, "quality_issues"] = len(email.evaluation.issues)
+
+                            # Track quality stats
+                            if email.evaluation.is_acceptable:
+                                results_summary["quality_passed"] += 1
+                            else:
+                                results_summary["quality_failed"] += 1
+
+                        if email.is_flagged:
+                            results_summary["flagged"] += 1
+                        else:
+                            results_summary["success"] += 1
+
+                        # Save email record to cache
                         await cache.save_email(contact.email, email.to_dict())
 
                         # Update progress
                         await cache.set_progress(csv_hash, i, len(contacts))
+
+                        # Save CSV after each contact for safety
+                        df.to_csv(output_path, index=False)
 
                     except Exception as e:
                         console.print(f"[red]Error processing {contact.email}: {e}[/red]")
@@ -165,12 +186,28 @@ async def _run_async(csv_path: Path, limit: Optional[int], skip_gmail: bool, res
             # Clear progress on completion
             await cache.clear_progress(csv_hash)
 
+    # Final save
+    df.to_csv(output_path, index=False)
+
     # Summary
     console.print()
     console.print("[bold]Processing Complete![/bold]")
+    console.print(f"  Output saved to: {output_path}")
     console.print(f"  AI-generated openers: {results_summary['success']}")
     console.print(f"  Template fallbacks: {results_summary['flagged']}")
     console.print(f"  Errors: {results_summary['errors']}")
+
+    if not skip_evaluation and (results_summary["quality_passed"] + results_summary["quality_failed"]) > 0:
+        console.print()
+        console.print("[bold]Quality Evaluation:[/bold]")
+        console.print(f"  Passed: {results_summary['quality_passed']}")
+        console.print(f"  Failed: {results_summary['quality_failed']}")
+        pass_rate = (
+            results_summary['quality_passed']
+            / (results_summary['quality_passed'] + results_summary['quality_failed'])
+            * 100
+        )
+        console.print(f"  Pass rate: {pass_rate:.1f}%")
 
 
 @app.command("dry-run")

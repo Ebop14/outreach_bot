@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from outreach_bot.evaluator.email_evaluator import EvaluationResult
 
 
 @dataclass
@@ -18,6 +21,7 @@ class GeneratedEmail:
     used_ai_opener: bool  # True if AI-generated, False if template fallback
     prompt_variation: Optional[str] = None  # For dry run tracking
     draft_id: Optional[str] = None  # Gmail draft ID once created
+    evaluation: Optional["EvaluationResult"] = None  # Quality evaluation results
     created_at: datetime = field(default_factory=datetime.utcnow)
 
     @property
@@ -27,7 +31,7 @@ class GeneratedEmail:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "to_email": self.to_email,
             "to_name": self.to_name,
             "company": self.company,
@@ -40,3 +44,12 @@ class GeneratedEmail:
             "created_at": self.created_at.isoformat(),
             "is_flagged": self.is_flagged,
         }
+
+        # Add evaluation results if available
+        if self.evaluation:
+            result["quality_score"] = self.evaluation.quality_score
+            result["quality_acceptable"] = self.evaluation.is_acceptable
+            result["quality_issues"] = len(self.evaluation.issues)
+            result["ai_indicators"] = len(self.evaluation.ai_indicators)
+
+        return result
