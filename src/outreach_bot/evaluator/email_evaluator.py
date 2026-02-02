@@ -22,6 +22,39 @@ class EvaluationResult:
     ai_indicators: list[str]
     strunk_white_violations: list[str]
 
+    def get_feedback_text(self, threshold: int = 70) -> str:
+        """
+        Format evaluation results as feedback text for AI rewriting.
+
+        Args:
+            threshold: The quality threshold being used.
+        """
+        feedback_parts = []
+
+        if self.ai_indicators:
+            feedback_parts.append("AI Writing Issues:")
+            for indicator in self.ai_indicators:
+                feedback_parts.append(f"  - {indicator}")
+
+        if self.strunk_white_violations:
+            feedback_parts.append("\nStyle Violations:")
+            for violation in self.strunk_white_violations:
+                feedback_parts.append(f"  - {violation}")
+
+        if self.issues:
+            feedback_parts.append("\nOther Issues:")
+            for issue in self.issues:
+                feedback_parts.append(f"  - {issue}")
+
+        if self.suggestions:
+            feedback_parts.append("\nSuggestions:")
+            for suggestion in self.suggestions:
+                feedback_parts.append(f"  - {suggestion}")
+
+        feedback_parts.append(f"\nQuality Score: {self.quality_score}/100 (needs {threshold}+)")
+
+        return "\n".join(feedback_parts)
+
 
 class EmailEvaluator:
     """Evaluates email quality and detects AI writing patterns."""
@@ -87,13 +120,19 @@ class EmailEvaluator:
         "a number of",
     ]
 
-    def __init__(self):
-        """Initialize the evaluator with AI model."""
+    def __init__(self, quality_threshold: int = 70):
+        """
+        Initialize the evaluator with AI model.
+
+        Args:
+            quality_threshold: Minimum quality score (0-100) to accept an email (default: 70).
+        """
         self.settings = get_settings()
         self.client = OpenAI(
             api_key=self.settings.xai_api_key,
             base_url=self.settings.xai_base_url,
         )
+        self.quality_threshold = quality_threshold
 
     def evaluate(self, email_body: str, email_subject: str) -> EvaluationResult:
         """
@@ -146,10 +185,10 @@ class EmailEvaluator:
         for issue in issues:
             logger.info(f"        - {issue}")
         logger.info(f"      Total penalty: {total_issues * 5} points")
-        logger.info(f"      Final score: {quality_score}/100 (threshold: 70)")
+        logger.info(f"      Final score: {quality_score}/100 (threshold: {self.quality_threshold})")
 
-        # Determine if acceptable (score >= 70)
-        is_acceptable = quality_score >= 70
+        # Determine if acceptable
+        is_acceptable = quality_score >= self.quality_threshold
 
         return EvaluationResult(
             is_acceptable=is_acceptable,

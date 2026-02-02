@@ -38,6 +38,8 @@ class AIOpener:
         contact: Contact,
         context: ScrapedContext,
         variation_key: str = "direct_reference",
+        feedback: Optional[str] = None,
+        previous_opener: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
         """
         Generate a personalized opener using Grok.
@@ -46,6 +48,8 @@ class AIOpener:
             contact: The contact to generate for.
             context: Scraped context about the company.
             variation_key: Which prompt variation to use.
+            feedback: Evaluation feedback from previous attempt (for retry).
+            previous_opener: The previous opener that failed (for retry).
 
         Returns:
             Tuple of (opener_text, error_message). One will be None.
@@ -55,6 +59,10 @@ class AIOpener:
 
         try:
             system_prompt, user_prompt = get_prompt(variation_key, contact, context)
+
+            # If feedback is provided, add it to guide the rewrite
+            if feedback and previous_opener:
+                user_prompt += f"\n\nPREVIOUS ATTEMPT (had quality issues):\n{previous_opener}\n\nQUALITY FEEDBACK:\n{feedback}\n\nPlease rewrite the opener addressing ALL the feedback above. Make it natural, specific, and human-sounding."
 
             response = self.client.chat.completions.create(
                 model=self.model,

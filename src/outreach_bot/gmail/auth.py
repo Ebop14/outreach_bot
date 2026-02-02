@@ -84,7 +84,7 @@ class GmailAuth:
         token_path = self.settings.gmail_token_path
         token_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(token_path, "w") as f:
+        with open(token_path, "w", encoding="utf-8") as f:
             f.write(self._credentials.to_json())
 
     def is_authenticated(self) -> bool:

@@ -12,6 +12,35 @@ from outreach_bot.models.context import Article
 logger = logging.getLogger(__name__)
 
 
+def normalize_unicode(text: str) -> str:
+    """
+    Normalize Unicode characters to ASCII equivalents to prevent encoding issues.
+
+    Handles smart quotes, dashes, and other problematic characters.
+    """
+    # Smart quotes and apostrophes
+    text = text.replace('\u2018', "'")  # Left single quote
+    text = text.replace('\u2019', "'")  # Right single quote
+    text = text.replace('\u201c', '"')  # Left double quote
+    text = text.replace('\u201d', '"')  # Right double quote
+    text = text.replace('\u2032', "'")  # Prime
+    text = text.replace('\u2033', '"')  # Double prime
+
+    # Dashes
+    text = text.replace('\u2013', '-')  # En dash
+    text = text.replace('\u2014', '-')  # Em dash
+    text = text.replace('\u2015', '-')  # Horizontal bar
+
+    # Ellipsis
+    text = text.replace('\u2026', '...')  # Horizontal ellipsis
+
+    # Other common problematic characters
+    text = text.replace('\u00a0', ' ')  # Non-breaking space
+    text = text.replace('\u00ad', '')   # Soft hyphen
+
+    return text
+
+
 class ArticleParser:
     """Parse HTML to extract articles and content."""
 
@@ -53,7 +82,9 @@ class ArticleParser:
         Returns:
             List of dicts with 'text', 'url', and 'path' for each link.
         """
-        soup = BeautifulSoup(html, "lxml")
+        # Normalize HTML to handle encoding issues
+        html = normalize_unicode(html)
+        soup = BeautifulSoup(html, "html.parser")
         links = []
         seen_urls = set()
 
@@ -99,7 +130,9 @@ class ArticleParser:
         Returns:
             List of (title, url) tuples for found articles.
         """
-        soup = BeautifulSoup(html, "lxml")
+        # Normalize HTML to handle encoding issues
+        html = normalize_unicode(html)
+        soup = BeautifulSoup(html, "html.parser")
         articles = []
         seen_urls = set()
         all_links_count = 0
@@ -182,7 +215,9 @@ class ArticleParser:
         Returns:
             Article object if content found, None otherwise.
         """
-        soup = BeautifulSoup(html, "lxml")
+        # Normalize HTML to handle encoding issues
+        html = normalize_unicode(html)
+        soup = BeautifulSoup(html, "html.parser")
 
         # Remove unwanted elements
         for tag_name in self.REMOVE_TAGS:
@@ -296,6 +331,8 @@ class ArticleParser:
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text."""
+        # Normalize Unicode characters first
+        text = normalize_unicode(text)
         # Normalize whitespace
         text = re.sub(r"\s+", " ", text)
         # Remove excessive newlines

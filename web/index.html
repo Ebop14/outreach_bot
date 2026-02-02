@@ -504,7 +504,7 @@
                         <button type="button" onclick="openFileBrowser()" style="padding: 0.75rem 1.5rem; white-space: nowrap; flex-shrink: 0;">Browse...</button>
                     </div>
                     <div id="selectedFile" style="font-size: 0.75rem; color: var(--ink-muted); margin-top: 0.5rem;">
-                        Tip: Use filename only if CSV is in /Users/echild/outreach_bot/
+                        Browse to select a CSV file from /Users/echild/outreach_bot/ or enter the filename directly
                     </div>
                 </div>
 
@@ -532,6 +532,22 @@
 
             <div class="form-section">
                 <div class="section-title">Quality & Output</div>
+
+                <div class="form-group">
+                    <label for="qualityThreshold">Quality Score Threshold</label>
+                    <input type="number" id="qualityThreshold" name="qualityThreshold" min="0" max="100" value="70" placeholder="70">
+                    <div style="font-size: 0.75rem; color: var(--ink-muted); margin-top: 0.25rem;">
+                        Minimum quality score (0-100) required to accept an email (default: 70)
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="maxRetries">Quality Retry Attempts</label>
+                    <input type="number" id="maxRetries" name="maxRetries" min="0" max="10" value="3" placeholder="3">
+                    <div style="font-size: 0.75rem; color: var(--ink-muted); margin-top: 0.25rem;">
+                        Number of times to retry with AI feedback if quality check fails (0-10, default: 3)
+                    </div>
+                </div>
 
                 <div class="checkbox-group">
                     <div class="checkbox-wrapper">
@@ -576,6 +592,7 @@
         </div>
         <div class="output-content" id="modalOutput"></div>
         <div class="output-footer">
+            <button class="close-output" onclick="stopProcess()" id="stopBtn" style="display: none; background: #ef4444;">Stop Process</button>
             <button class="close-output" onclick="closeOutputModal()" id="closeModalBtn" style="display: none;">Close</button>
         </div>
     </div>
@@ -608,11 +625,21 @@
             const file = e.target.files[0];
             if (file) {
                 console.log('File name:', file.name);
+
+                // Use just the filename - the command will run from project root
+                let filename = file.name;
+
+                // Ensure .csv extension
+                if (!filename.toLowerCase().endsWith('.csv')) {
+                    filename += '.csv';
+                }
+
                 const inputCsvPath = document.getElementById('inputCsvPath');
-                console.log('Input element:', inputCsvPath);
-                inputCsvPath.value = file.name;
+                inputCsvPath.value = filename;
+
                 console.log('Set value to:', inputCsvPath.value);
-                document.getElementById('selectedFile').textContent = `Selected: ${file.name}`;
+                document.getElementById('selectedFile').textContent = `Selected: ${filename}`;
+                document.getElementById('selectedFile').style.color = '#10b981';
                 updateCommandPreview();
             } else {
                 console.log('No file selected');
@@ -633,6 +660,8 @@
             const inputCsv = document.getElementById('inputCsvPath').value || 'contacts.csv';
             const outputCsv = document.getElementById('outputCsv').value;
             const limit = document.getElementById('limit').value;
+            const qualityThreshold = document.getElementById('qualityThreshold').value;
+            const maxRetries = document.getElementById('maxRetries').value;
             const resume = document.getElementById('resume').checked;
             const skipEvaluation = document.getElementById('skipEvaluation').checked;
             const verbose = document.getElementById('verbose').checked;
@@ -641,6 +670,8 @@
 
             if (outputCsv) command += ` --output ${outputCsv}`;
             if (limit) command += ` --limit ${limit}`;
+            if (maxRetries && maxRetries !== '3') command += ` --max-retries ${maxRetries}`;
+            if (qualityThreshold && qualityThreshold !== '70') command += ` --quality-threshold ${qualityThreshold}`;
             if (!resume) command += ` --no-resume`;
             if (skipEvaluation) command += ` --skip-evaluation`;
             if (verbose) command += ` --verbose`;
@@ -658,12 +689,22 @@
         document.getElementById('inputCsvPath').addEventListener('input', updateCommandPreview);
 
         // Form submission
+        let currentProcessId = null;
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            const inputCsv = document.getElementById('inputCsvPath').value || 'contacts.csv';
+            let inputCsv = document.getElementById('inputCsvPath').value || 'contacts.csv';
+
+            // Ensure .csv extension
+            if (!inputCsv.toLowerCase().endsWith('.csv')) {
+                inputCsv += '.csv';
+            }
+
             const outputCsv = document.getElementById('outputCsv').value;
             const limit = document.getElementById('limit').value;
+            const qualityThreshold = document.getElementById('qualityThreshold').value;
+            const maxRetries = document.getElementById('maxRetries').value;
             const resume = document.getElementById('resume').checked;
             const skipEvaluation = document.getElementById('skipEvaluation').checked;
             const verbose = document.getElementById('verbose').checked;
@@ -673,6 +714,8 @@
 
             if (outputCsv) command += ` --output ${outputCsv}`;
             if (limit) command += ` --limit ${limit}`;
+            if (maxRetries && maxRetries !== '3') command += ` --max-retries ${maxRetries}`;
+            if (qualityThreshold && qualityThreshold !== '70') command += ` --quality-threshold ${qualityThreshold}`;
             if (!resume) command += ` --no-resume`;
             if (skipEvaluation) command += ` --skip-evaluation`;
             if (verbose) command += ` --verbose`;
@@ -683,6 +726,7 @@
             modalTitle.textContent = 'Running Outreach Bot...';
             modalStatus.textContent = 'Processing';
             closeModalBtn.style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'inline-block';
             runButton.classList.add('loading');
             runButton.textContent = 'Running...';
 
@@ -696,6 +740,7 @@
                 });
 
                 const data = await response.json();
+                currentProcessId = data.pid;
 
                 if (data.success) {
                     modalOutput.textContent += `\n${data.output}\n\n✓ Completed successfully!`;
@@ -706,27 +751,69 @@
                     modalOutput.textContent += `\n${data.error}\n\n✗ Error occurred`;
                     modalTitle.textContent = 'Outreach Bot - Error';
                     modalStatus.textContent = 'Failed';
-                    modalStatus.style.color = var(--accent);
+                    modalStatus.style.color = 'var(--accent)';
                 }
             } catch (error) {
                 modalOutput.textContent += `\n\nError: ${error.message}\n\nNote: This is a frontend demo. To actually run commands, you need to set up a backend server.\n\nFor now, copy the command above and run it in your terminal.`;
                 modalTitle.textContent = 'Outreach Bot - Info';
                 modalStatus.textContent = 'Manual';
-                modalStatus.style.color = var(--accent-soft);
+                modalStatus.style.color = 'var(--accent-soft)';
             } finally {
                 runButton.classList.remove('loading');
                 runButton.textContent = 'Run Outreach Bot';
                 closeModalBtn.style.display = 'block';
+                document.getElementById('stopBtn').style.display = 'none';
+                currentProcessId = null;
 
                 // Remove pulsing indicator when done
                 document.querySelector('.pulse-indicator').style.display = 'none';
             }
         });
 
+        async function stopProcess() {
+            if (!currentProcessId) {
+                modalOutput.textContent += '\n\nNo process to stop.\n';
+                return;
+            }
+
+            modalOutput.textContent += '\n\nStopping process...\n';
+
+            try {
+                const response = await fetch('/api/stop', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ pid: currentProcessId })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    modalOutput.textContent += '\n✓ Process stopped successfully\n';
+                    modalTitle.textContent = 'Outreach Bot - Stopped';
+                    modalStatus.textContent = 'Stopped';
+                    modalStatus.style.color = '#f59e0b';
+                } else {
+                    modalOutput.textContent += `\n✗ Failed to stop: ${data.error}\n`;
+                }
+            } catch (error) {
+                modalOutput.textContent += `\n✗ Error stopping process: ${error.message}\n`;
+            } finally {
+                document.getElementById('stopBtn').style.display = 'none';
+                closeModalBtn.style.display = 'block';
+                runButton.classList.remove('loading');
+                runButton.textContent = 'Run Outreach Bot';
+                currentProcessId = null;
+            }
+        }
+
         function clearForm() {
             form.reset();
             document.getElementById('resume').checked = true;
-            document.getElementById('selectedFile').textContent = 'Tip: Use filename only if CSV is in /Users/echild/outreach_bot/';
+            const selectedFile = document.getElementById('selectedFile');
+            selectedFile.textContent = 'Browse to select a CSV file from /Users/echild/outreach_bot/ or enter the filename directly';
+            selectedFile.style.color = 'var(--ink-muted)';
             outputDiv.classList.remove('visible');
             outputModal.classList.remove('visible');
             updateCommandPreview();

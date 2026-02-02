@@ -53,6 +53,8 @@ def run(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output CSV path (default: input_with_emails.csv)"),
     resume: bool = typer.Option(True, "--resume/--no-resume", help="Resume from last progress"),
     skip_evaluation: bool = typer.Option(False, "--skip-evaluation", help="Skip quality evaluation"),
+    max_retries: int = typer.Option(3, "--max-retries", "-r", help="Max retries with feedback for quality improvement (default: 3)"),
+    quality_threshold: int = typer.Option(70, "--quality-threshold", "-q", help="Minimum quality score 0-100 to accept (default: 70)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ):
     """Process contacts and generate emails, writing results to CSV."""
@@ -60,24 +62,36 @@ def run(
         console.print(f"[red]Error: CSV file not found: {csv_path}[/red]")
         raise typer.Exit(1)
 
-    # Configure logging
-    if verbose:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(message)s",
-            handlers=[RichHandler(console=console, rich_tracebacks=True, show_time=False, show_path=False)]
-        )
+    # Configure logging - always enabled, verbose adds more detail
+    log_level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(message)s",
+        handlers=[RichHandler(console=console, rich_tracebacks=True, show_time=False, show_path=False)],
+        force=True  # Override any existing config
+    )
 
     # Default output path
     if output is None:
         output = csv_path.parent / f"{csv_path.stem}_with_emails.csv"
 
-    asyncio.run(_run_async(csv_path, limit, output, resume, skip_evaluation))
+    console.print("\n[bold cyan]🤖 Outreach Bot Starting...[/bold cyan]\n")
+    console.print(f"[dim]Input:[/dim]  {csv_path}")
+    console.print(f"[dim]Output:[/dim] {output}")
+    console.print(f"[dim]Quality threshold:[/dim] {quality_threshold}/100")
+    console.print(f"[dim]Max retries:[/dim] {max_retries}")
+    if skip_evaluation:
+        console.print(f"[yellow]⚠ Quality evaluation disabled[/yellow]")
+    console.print()
+
+    asyncio.run(_run_async(csv_path, limit, output, resume, skip_evaluation, max_retries, quality_threshold, verbose))
 
 
-async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, resume: bool, skip_evaluation: bool):
+async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, resume: bool, skip_evaluation: bool, max_retries: int, quality_threshold: int, verbose: bool):
     """Async implementation of run command."""
+    logger = logging.getLogger(__name__)
     # Load original CSV as DataFrame to preserve all columns
+    console.print("[cyan]📂 Loading contacts...[/cyan]")
     df = pd.read_csv(csv_path, encoding='utf-8')
 
     # Load contacts
@@ -89,6 +103,9 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
     if limit:
         contacts = contacts[:limit]
         df = df.iloc[:limit].copy()
+        console.print(f"[dim]Limiting to first {limit} contacts[/dim]")
+
+    console.print(f"[green]✓ Loaded {len(contacts)} contacts[/green]\n")
 
     csv_hash = get_csv_hash(csv_path)
 
@@ -121,7 +138,11 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
 
         async with Fetcher() as fetcher:
             analyzer = ContextAnalyzer(fetcher, cache)
-            generator = EmailGenerator(enable_evaluation=not skip_evaluation)
+            generator = EmailGenerator(
+                enable_evaluation=not skip_evaluation,
+                max_retries=max_retries,
+                quality_threshold=quality_threshold
+            )
 
             # Process contacts
             with Progress(
@@ -151,11 +172,33 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                     )
 
                     try:
+                        console.print(f"\n[bold]━━━ Contact {i+1}/{len(contacts)}: {contact.company} ({contact.email}) ━━━[/bold]")
+
                         # Get context
+                        console.print(f"[cyan]🌐 Fetching website content from {contact.website}...[/cyan]")
                         context = await analyzer.get_context(contact)
+                        console.print(f"[dim]   Context quality: {context.quality.value}[/dim]")
+                        if context.blog_url:
+                            console.print(f"[dim]   Blog found: {context.blog_url}[/dim]")
+                            console.print(f"[dim]   Articles found: {len(context.articles)}[/dim]")
 
                         # Generate email
+                        console.print(f"[cyan]✍️  Generating personalized email...[/cyan]")
                         email = generator.generate_email(contact, context)
+
+                        # Show generation result
+                        if email.used_ai_opener:
+                            console.print(f"[green]   ✓ AI-generated email[/green]")
+                        else:
+                            console.print(f"[yellow]   ⚠ Template fallback used[/yellow]")
+
+                        # Show quality if evaluated
+                        if email.evaluation:
+                            score = email.evaluation.quality_score
+                            acceptable = email.evaluation.is_acceptable
+                            status_icon = "✓" if acceptable else "✗"
+                            status_color = "green" if acceptable else "yellow"
+                            console.print(f"[{status_color}]   {status_icon} Quality score: {score}/{quality_threshold}[/{status_color}]")
 
                         # Write to DataFrame
                         df.at[contact.row_index, "generated_subject"] = email.subject
@@ -186,10 +229,14 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                         await cache.set_progress(csv_hash, i, len(contacts))
 
                         # Save CSV after each contact for safety
-                        df.to_csv(output_path, index=False, encoding='utf-8')
+                        console.print(f"[dim]💾 Saved to {output_path}[/dim]")
+                        df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
                     except Exception as e:
-                        console.print(f"[red]Error processing {contact.email}: {e}[/red]")
+                        console.print(f"[red]✗ Error processing {contact.email}: {e}[/red]")
+                        if verbose:
+                            import traceback
+                            console.print(f"[red]{traceback.format_exc()}[/red]")
                         results_summary["errors"] += 1
 
                     progress.advance(task)
@@ -197,8 +244,31 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
             # Clear progress on completion
             await cache.clear_progress(csv_hash)
 
+            # Print summary
+            console.print("\n[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
+            console.print("[bold cyan]📊 Processing Complete![/bold cyan]\n")
+
+            console.print(f"[green]✓ Successfully processed:[/green] {results_summary['success']}")
+            if results_summary['flagged'] > 0:
+                console.print(f"[yellow]⚠ Flagged for review:[/yellow] {results_summary['flagged']}")
+            if results_summary['errors'] > 0:
+                console.print(f"[red]✗ Errors:[/red] {results_summary['errors']}")
+
+            if not skip_evaluation:
+                console.print(f"\n[bold]Quality Results:[/bold]")
+                console.print(f"[green]  Passed ({quality_threshold}+):[/green] {results_summary['quality_passed']}")
+                console.print(f"[yellow]  Below threshold:[/yellow] {results_summary['quality_failed']}")
+
+                if results_summary['quality_passed'] + results_summary['quality_failed'] > 0:
+                    pass_rate = (results_summary['quality_passed'] / (results_summary['quality_passed'] + results_summary['quality_failed'])) * 100
+                    console.print(f"[dim]  Pass rate: {pass_rate:.1f}%[/dim]")
+
+            console.print(f"\n[bold]Output saved to:[/bold] [cyan]{output_path}[/cyan]")
+            console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
+
     # Final save
-    df.to_csv(output_path, index=False, encoding='utf-8')
+    console.print(f"[dim]💾 Final save to {output_path}[/dim]")
+    df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
     # Summary
     console.print()

@@ -16,18 +16,22 @@ logger = logging.getLogger(__name__)
 class EmailGenerator:
     """Orchestrates email generation from context."""
 
-    def __init__(self, use_cheap_model: bool = False, enable_evaluation: bool = True):
+    def __init__(self, use_cheap_model: bool = False, enable_evaluation: bool = True, max_retries: int = 3, quality_threshold: int = 70):
         """
         Initialize email generator.
 
         Args:
             use_cheap_model: If True, use cheaper model for AI generation.
             enable_evaluation: If True, evaluate emails for quality.
+            max_retries: Maximum number of retry attempts with feedback (default: 3).
+            quality_threshold: Minimum quality score to accept (default: 70).
         """
         self.ai_opener = AIOpener(use_cheap_model=use_cheap_model)
         self.templates = TemplateManager()
-        self.evaluator = EmailEvaluator() if enable_evaluation else None
+        self.evaluator = EmailEvaluator(quality_threshold=quality_threshold) if enable_evaluation else None
         self.enable_evaluation = enable_evaluation
+        self.max_retries = max_retries
+        self.quality_threshold = quality_threshold
 
     def generate_email(
         self,
@@ -52,58 +56,98 @@ class EmailGenerator:
 
         used_ai = False
         opener = ""
+        subject = ""
+        body = ""
         evaluation_result = None
-        max_retries = 2
-        attempted_variations = [prompt_variation]
+        previous_opener = None
+        feedback = None
+
+        # Cache all attempts with their scores
+        cached_attempts = []
 
         if context.quality == ContextQuality.GOOD and context.has_usable_content:
             logger.info(f"  → Attempting AI generation for {contact.email}")
-            # Try AI generation with retries
-            for attempt in range(max_retries + 1):
-                logger.info(f"    Attempt {attempt + 1}/{max_retries + 1} with variation: {prompt_variation}")
-                opener, error = self.ai_opener.generate_opener(
-                    contact, context, prompt_variation
+            # Try AI generation with feedback-based retries
+            for attempt in range(self.max_retries + 1):
+                is_retry = attempt > 0
+                retry_info = f" (retry {attempt}/{self.max_retries})" if is_retry else ""
+                logger.info(f"    Attempt {attempt + 1}/{self.max_retries + 1}{retry_info}")
+
+                # Generate opener (with feedback if this is a retry)
+                attempt_opener, error = self.ai_opener.generate_opener(
+                    contact,
+                    context,
+                    prompt_variation,
+                    feedback=feedback,
+                    previous_opener=previous_opener
                 )
 
-                if not opener or error:
-                    logger.warning(f"    AI generation failed: opener={bool(opener)}, error={error}")
+                if not attempt_opener or error:
+                    logger.warning(f"    AI generation failed: opener={bool(attempt_opener)}, error={error}")
                     break
 
-                logger.info(f"    AI opener generated successfully (length: {len(opener)})")
+                logger.info(f"    AI opener generated successfully (length: {len(attempt_opener)})")
 
                 # Assemble email for evaluation
-                subject, body = self.templates.assemble_email(contact, opener)
+                attempt_subject, attempt_body = self.templates.assemble_email(contact, attempt_opener)
 
                 # Evaluate quality if enabled
                 if self.enable_evaluation and self.evaluator:
-                    evaluation_result = self.evaluator.evaluate(body, subject)
-                    logger.info(f"    Quality evaluation: score={evaluation_result.quality_score}, acceptable={evaluation_result.is_acceptable}")
+                    attempt_evaluation = self.evaluator.evaluate(attempt_body, attempt_subject)
+                    logger.info(f"    Quality evaluation: score={attempt_evaluation.quality_score}, acceptable={attempt_evaluation.is_acceptable}")
 
-                    if evaluation_result.is_acceptable:
+                    # Cache this attempt
+                    cached_attempts.append({
+                        'opener': attempt_opener,
+                        'subject': attempt_subject,
+                        'body': attempt_body,
+                        'evaluation': attempt_evaluation,
+                        'score': attempt_evaluation.quality_score,
+                        'attempt_number': attempt + 1
+                    })
+
+                    if attempt_evaluation.is_acceptable:
+                        # Success! Use this attempt
+                        opener = attempt_opener
+                        subject = attempt_subject
+                        body = attempt_body
+                        evaluation_result = attempt_evaluation
                         used_ai = True
                         logger.info(f"  ✓ AI opener accepted for {contact.email}")
                         break
-                    elif attempt < max_retries:
-                        logger.warning(f"    Quality check failed, trying different variation...")
-                        # Try a different prompt variation
-                        all_variations = get_all_variation_keys()
-                        # Find a variation we haven't tried yet
-                        for var in all_variations:
-                            if var not in attempted_variations:
-                                prompt_variation = var
-                                attempted_variations.append(var)
-                                break
+                    elif attempt < self.max_retries:
+                        logger.warning(f"    Quality check failed (score: {attempt_evaluation.quality_score}/{self.quality_threshold})")
+                        logger.info(f"    Preparing feedback for retry...")
+                        # Save current opener and prepare feedback for next attempt
+                        previous_opener = attempt_opener
+                        feedback = attempt_evaluation.get_feedback_text(threshold=self.quality_threshold)
+                        logger.info(f"    Feedback:\n{feedback}")
                         continue
+                    else:
+                        logger.warning(f"    Max retries ({self.max_retries}) reached")
+                        # Use best cached attempt instead of template fallback
+                        if cached_attempts:
+                            best_attempt = max(cached_attempts, key=lambda x: x['score'])
+                            logger.info(f"  → Using best attempt (#{best_attempt['attempt_number']}, score: {best_attempt['score']}/{self.quality_threshold})")
+                            opener = best_attempt['opener']
+                            subject = best_attempt['subject']
+                            body = best_attempt['body']
+                            evaluation_result = best_attempt['evaluation']
+                            used_ai = True
+                        break
                 else:
                     # No evaluation, accept the opener
+                    opener = attempt_opener
+                    subject = attempt_subject
+                    body = attempt_body
                     used_ai = True
                     logger.info(f"  ✓ AI opener accepted (evaluation disabled) for {contact.email}")
                     break
         else:
             logger.warning(f"  → Skipping AI generation for {contact.email}: quality={context.quality.value}, has_content={context.has_usable_content}")
 
-        if not opener or (evaluation_result and not evaluation_result.is_acceptable):
-            # Use template fallback
+        # Only use template fallback if AI generation completely failed or was skipped
+        if not opener:
             logger.info(f"  → Using template fallback for {contact.email}")
             opener = self.templates.get_fallback_opener(contact)
             subject, body = self.templates.assemble_email(contact, opener)

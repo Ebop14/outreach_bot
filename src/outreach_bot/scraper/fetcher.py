@@ -89,7 +89,15 @@ class Fetcher:
                     if "text/html" not in content_type and "text/plain" not in content_type:
                         return None, f"Non-HTML content type: {content_type}"
 
-                    return response.text, None
+                    # Ensure proper encoding - httpx auto-detects but we can be explicit
+                    # If encoding detection fails, force UTF-8
+                    try:
+                        text = response.text
+                    except (UnicodeDecodeError, LookupError):
+                        # Fallback to UTF-8 with error replacement
+                        text = response.content.decode('utf-8', errors='replace')
+
+                    return text, None
 
             except httpx.TimeoutException:
                 if attempt == max_retries - 1:
