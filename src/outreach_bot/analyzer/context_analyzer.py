@@ -1,11 +1,15 @@
 """Content quality assessment and context analysis."""
 
+import logging
+
 from outreach_bot.config import get_settings
 from outreach_bot.models.context import ScrapedContext, ContextQuality, Article
 from outreach_bot.models.contact import Contact
 from outreach_bot.scraper.fetcher import Fetcher
 from outreach_bot.scraper.blog_finder import BlogFinder
 from outreach_bot.cache.sqlite_cache import SQLiteCache
+
+logger = logging.getLogger(__name__)
 
 
 class ContextAnalyzer:
@@ -24,13 +28,16 @@ class ContextAnalyzer:
         Checks cache first, then scrapes if needed.
         """
         domain = contact.domain
+        logger.info(f"Getting context for domain: {domain}")
 
         # Check cache first
         cached = await self.cache.get_context(domain)
         if cached:
+            logger.info(f"  Using cached context (quality: {cached.quality.value})")
             return cached
 
         # Scrape fresh context
+        logger.info(f"  No cache found, scraping fresh content...")
         context = await self._scrape_context(domain)
 
         # Cache the result
@@ -41,19 +48,25 @@ class ContextAnalyzer:
     async def _scrape_context(self, domain: str) -> ScrapedContext:
         """Scrape and analyze content from a domain."""
         # Try to find blog
+        logger.info(f"  Searching for blog on {domain}...")
         blog_url = await self.blog_finder.find_blog(domain)
 
         if not blog_url:
+            logger.warning(f"  ✗ No blog found for {domain}")
             return ScrapedContext(
                 domain=domain,
                 quality=ContextQuality.LOW_QUALITY,
                 error_message="No blog or content section found",
             )
 
+        logger.info(f"  ✓ Found blog: {blog_url}")
+
         # Scrape articles
+        logger.info(f"  Scraping articles from {blog_url}...")
         articles = await self.blog_finder.scrape_articles(blog_url, max_articles=3)
 
         if not articles:
+            logger.warning(f"  ✗ No articles extracted from {blog_url}")
             return ScrapedContext(
                 domain=domain,
                 quality=ContextQuality.LOW_QUALITY,
@@ -61,8 +74,11 @@ class ContextAnalyzer:
                 error_message="Blog found but no articles could be extracted",
             )
 
+        logger.info(f"  ✓ Extracted {len(articles)} articles")
+
         # Assess quality
         quality = self._assess_quality(articles)
+        logger.info(f"  Content quality assessed as: {quality.value}")
 
         # Build summary for AI prompt
         summary = self._build_summary(articles)
@@ -85,9 +101,12 @@ class ContextAnalyzer:
         min_words = self.settings.min_article_words
 
         for article in articles:
+            logger.info(f"    Article: '{article.title}' - {article.word_count} words")
             if article.word_count >= min_words:
+                logger.info(f"    ✓ Article meets minimum word count ({min_words} words)")
                 return ContextQuality.GOOD
 
+        logger.warning(f"    ✗ No articles meet minimum word count ({min_words} words)")
         return ContextQuality.LOW_QUALITY
 
     def _build_summary(self, articles: list[Article]) -> str:

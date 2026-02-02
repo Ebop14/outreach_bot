@@ -1,11 +1,14 @@
 """Email quality evaluator to detect AI-generated writing patterns."""
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
 
 from openai import OpenAI
 from outreach_bot.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -123,13 +126,27 @@ class EmailEvaluator:
             strunk_white_violations.extend(ai_result.get("style_issues", []))
             suggestions.extend(ai_result.get("suggestions", []))
 
-        # Calculate quality score
+        # Calculate quality score (adjusted to be less strict)
         total_issues = (
-            len(ai_indicators) * 3  # AI indicators weighted heavily
-            + len(strunk_white_violations) * 2
-            + len(issues)
+            len(ai_indicators) * 2  # AI indicators (reduced from 3)
+            + len(strunk_white_violations) * 1  # Style violations (reduced from 2)
+            + len(issues) * 1
         )
-        quality_score = max(0, 100 - (total_issues * 5))
+        quality_score = max(0, 100 - (total_issues * 3))  # Reduced penalty from 5 to 3
+
+        # Log evaluation details
+        logger.info(f"    Quality Evaluation Details:")
+        logger.info(f"      AI indicators ({len(ai_indicators)}x3={len(ai_indicators)*3} points):")
+        for indicator in ai_indicators:
+            logger.info(f"        - {indicator}")
+        logger.info(f"      Style violations ({len(strunk_white_violations)}x2={len(strunk_white_violations)*2} points):")
+        for violation in strunk_white_violations:
+            logger.info(f"        - {violation}")
+        logger.info(f"      Other issues ({len(issues)}x1={len(issues)} points):")
+        for issue in issues:
+            logger.info(f"        - {issue}")
+        logger.info(f"      Total penalty: {total_issues * 5} points")
+        logger.info(f"      Final score: {quality_score}/100 (threshold: 70)")
 
         # Determine if acceptable (score >= 70)
         is_acceptable = quality_score >= 70

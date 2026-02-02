@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,7 @@ import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
+from rich.logging import RichHandler
 
 from outreach_bot.models.contact import Contact
 from outreach_bot.scraper.fetcher import Fetcher
@@ -51,11 +53,20 @@ def run(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output CSV path (default: input_with_emails.csv)"),
     resume: bool = typer.Option(True, "--resume/--no-resume", help="Resume from last progress"),
     skip_evaluation: bool = typer.Option(False, "--skip-evaluation", help="Skip quality evaluation"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ):
     """Process contacts and generate emails, writing results to CSV."""
     if not csv_path.exists():
         console.print(f"[red]Error: CSV file not found: {csv_path}[/red]")
         raise typer.Exit(1)
+
+    # Configure logging
+    if verbose:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(message)s",
+            handlers=[RichHandler(console=console, rich_tracebacks=True, show_time=False, show_path=False)]
+        )
 
     # Default output path
     if output is None:

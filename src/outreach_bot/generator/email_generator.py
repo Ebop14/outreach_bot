@@ -1,5 +1,6 @@
 """Main email generation orchestrator."""
 
+import logging
 from typing import Optional
 
 from outreach_bot.models.contact import Contact
@@ -8,6 +9,8 @@ from outreach_bot.models.email import GeneratedEmail
 from outreach_bot.generator.ai_opener import AIOpener
 from outreach_bot.generator.templates import TemplateManager
 from outreach_bot.evaluator.email_evaluator import EmailEvaluator
+
+logger = logging.getLogger(__name__)
 
 
 class EmailGenerator:
@@ -40,6 +43,13 @@ class EmailGenerator:
         """
         from outreach_bot.generator.prompts.variations import get_all_variation_keys
 
+        logger.info(f"Generating email for {contact.email}")
+        logger.info(f"  Context quality: {context.quality.value}")
+        logger.info(f"  Has usable content: {context.has_usable_content}")
+        logger.info(f"  Blog URL: {context.blog_url}")
+        logger.info(f"  Summary length: {len(context.summary)} chars")
+        logger.info(f"  Number of articles: {len(context.articles)}")
+
         used_ai = False
         opener = ""
         evaluation_result = None
@@ -47,14 +57,19 @@ class EmailGenerator:
         attempted_variations = [prompt_variation]
 
         if context.quality == ContextQuality.GOOD and context.has_usable_content:
+            logger.info(f"  → Attempting AI generation for {contact.email}")
             # Try AI generation with retries
             for attempt in range(max_retries + 1):
+                logger.info(f"    Attempt {attempt + 1}/{max_retries + 1} with variation: {prompt_variation}")
                 opener, error = self.ai_opener.generate_opener(
                     contact, context, prompt_variation
                 )
 
                 if not opener or error:
+                    logger.warning(f"    AI generation failed: opener={bool(opener)}, error={error}")
                     break
+
+                logger.info(f"    AI opener generated successfully (length: {len(opener)})")
 
                 # Assemble email for evaluation
                 subject, body = self.templates.assemble_email(contact, opener)
@@ -62,11 +77,14 @@ class EmailGenerator:
                 # Evaluate quality if enabled
                 if self.enable_evaluation and self.evaluator:
                     evaluation_result = self.evaluator.evaluate(body, subject)
+                    logger.info(f"    Quality evaluation: score={evaluation_result.quality_score}, acceptable={evaluation_result.is_acceptable}")
 
                     if evaluation_result.is_acceptable:
                         used_ai = True
+                        logger.info(f"  ✓ AI opener accepted for {contact.email}")
                         break
                     elif attempt < max_retries:
+                        logger.warning(f"    Quality check failed, trying different variation...")
                         # Try a different prompt variation
                         all_variations = get_all_variation_keys()
                         # Find a variation we haven't tried yet
@@ -79,10 +97,14 @@ class EmailGenerator:
                 else:
                     # No evaluation, accept the opener
                     used_ai = True
+                    logger.info(f"  ✓ AI opener accepted (evaluation disabled) for {contact.email}")
                     break
+        else:
+            logger.warning(f"  → Skipping AI generation for {contact.email}: quality={context.quality.value}, has_content={context.has_usable_content}")
 
         if not opener or (evaluation_result and not evaluation_result.is_acceptable):
             # Use template fallback
+            logger.info(f"  → Using template fallback for {contact.email}")
             opener = self.templates.get_fallback_opener(contact)
             subject, body = self.templates.assemble_email(contact, opener)
 

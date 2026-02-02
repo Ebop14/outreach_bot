@@ -9,19 +9,16 @@ class TemplateManager:
 
     # Fallback openers when AI generation isn't possible
     FALLBACK_OPENERS = [
-        "I came across {company} and was impressed by your work in the industry.",
-        "I've been following {company}'s growth and wanted to reach out.",
-        "I noticed {company} is doing interesting things in your space.",
+        "I came across {company} while researching firms in your space.",
+        "Been following {company}'s work and thought I'd reach out.",
+        "{company} caught my attention recently.",
     ]
 
     # Value propositions to include in emails
     VALUE_PROPS = """
-I run an AI consultancy that helps companies like yours:
-• Build custom AI solutions tailored to your specific workflows
-• Reduce operational costs through intelligent automation
-• Gain competitive advantage with cutting-edge ML capabilities
+I build AI solutions for workflow automation. My focus is practical implementations that save time and money.
 
-We've helped companies achieve 40%+ efficiency gains in their core processes.
+I can share examples from similar work.
 """.strip()
 
     # Email subject templates
@@ -33,9 +30,9 @@ We've helped companies achieve 40%+ efficiency gains in their core processes.
 
     # Closing template
     CLOSING = """
-Would you be open to a 15-minute call to explore if there's a fit?
+Let me know if you'd like to chat.
 
-Best regards,
+Best,
 [Your Name]
 [Your Company]
 """.strip()
