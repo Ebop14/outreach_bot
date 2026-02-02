@@ -149,13 +149,13 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                         # Write to DataFrame
                         df.at[contact.row_index, "generated_subject"] = email.subject
                         df.at[contact.row_index, "generated_body"] = email.body
-                        df.at[contact.row_index, "ai_generated"] = email.used_ai_opener
+                        df.at[contact.row_index, "ai_generated"] = str(email.used_ai_opener)
 
                         # Add evaluation results if available
                         if email.evaluation:
-                            df.at[contact.row_index, "quality_score"] = email.evaluation.quality_score
-                            df.at[contact.row_index, "quality_acceptable"] = email.evaluation.is_acceptable
-                            df.at[contact.row_index, "quality_issues"] = len(email.evaluation.issues)
+                            df.at[contact.row_index, "quality_score"] = str(email.evaluation.quality_score)
+                            df.at[contact.row_index, "quality_acceptable"] = str(email.evaluation.is_acceptable)
+                            df.at[contact.row_index, "quality_issues"] = str(len(email.evaluation.issues))
 
                             # Track quality stats
                             if email.evaluation.is_acceptable:
