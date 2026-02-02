@@ -147,6 +147,7 @@
 
         input[type="text"],
         input[type="number"],
+        input[type="file"],
         select {
             width: 100%;
             padding: 0.75rem;
@@ -158,8 +159,26 @@
             transition: all 0.2s ease;
         }
 
+        input[type="file"]::file-selector-button {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-right: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        input[type="file"]::file-selector-button:hover {
+            background: var(--accent);
+            color: var(--paper);
+            border-color: var(--accent);
+        }
+
         input[type="text"]:focus,
         input[type="number"]:focus,
+        input[type="file"]:focus,
         select:focus {
             outline: none;
             border-color: var(--accent);
@@ -355,6 +374,115 @@
         @keyframes spin {
             to { transform: translateY(-50%) rotate(360deg); }
         }
+
+        /* Full-screen output modal */
+        .output-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--ink);
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+            animation: modalIn 0.3s ease-out;
+        }
+
+        .output-modal.visible {
+            display: flex;
+        }
+
+        @keyframes modalIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .output-header {
+            padding: 2rem;
+            border-bottom: 2px solid var(--accent);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .output-title {
+            font-family: 'Crimson Pro', serif;
+            font-size: 1.5rem;
+            color: #00ff41;
+            font-weight: 600;
+        }
+
+        .output-status {
+            font-size: 0.875rem;
+            color: var(--accent-soft);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .output-content {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.8;
+            color: #00ff41;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .output-footer {
+            padding: 1.5rem 2rem;
+            border-top: 2px solid var(--accent);
+            display: flex;
+            gap: 1rem;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .output-footer button {
+            flex: 1;
+            max-width: 200px;
+        }
+
+        .close-output {
+            background: transparent;
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .close-output:hover {
+            background: var(--accent);
+            color: var(--ink);
+        }
+
+        /* Pulsing indicator for running state */
+        .pulse-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #00ff41;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.5;
+                transform: scale(0.9);
+            }
+        }
     </style>
 </head>
 <body>
@@ -370,7 +498,14 @@
 
                 <div class="form-group">
                     <label for="inputCsv">Input CSV File</label>
-                    <input type="text" id="inputCsv" name="inputCsv" placeholder="contacts.csv" required>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="inputCsvPath" name="inputCsvPath" placeholder="contacts.csv or full path" required style="flex: 1;">
+                        <input type="file" id="inputCsv" name="inputCsv" accept=".csv" style="display: none;">
+                        <button type="button" onclick="document.getElementById('inputCsv').click()" style="padding: 0.75rem 1.5rem; white-space: nowrap; flex-shrink: 0;">Browse...</button>
+                    </div>
+                    <div id="selectedFile" style="font-size: 0.75rem; color: var(--ink-muted); margin-top: 0.5rem;">
+                        Tip: Use filename only if CSV is in /Users/echild/outreach_bot/
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -430,15 +565,45 @@
         <div id="output"></div>
     </div>
 
+    <!-- Full-screen output modal -->
+    <div id="outputModal" class="output-modal">
+        <div class="output-header">
+            <div class="output-title">
+                <span class="pulse-indicator"></span>
+                <span id="modalTitle">Running Outreach Bot...</span>
+            </div>
+            <div class="output-status" id="modalStatus">Processing</div>
+        </div>
+        <div class="output-content" id="modalOutput"></div>
+        <div class="output-footer">
+            <button class="close-output" onclick="closeOutputModal()" id="closeModalBtn" style="display: none;">Close</button>
+        </div>
+    </div>
+
     <script>
         const form = document.getElementById('configForm');
         const commandPreview = document.getElementById('commandPreview');
         const outputDiv = document.getElementById('output');
         const runButton = document.getElementById('runButton');
+        const outputModal = document.getElementById('outputModal');
+        const modalOutput = document.getElementById('modalOutput');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalStatus = document.getElementById('modalStatus');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+
+        // Handle file selection
+        document.getElementById('inputCsv').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('inputCsvPath').value = file.name;
+                document.getElementById('selectedFile').textContent = `Selected: ${file.name}`;
+                updateCommandPreview();
+            }
+        });
 
         // Update command preview
         function updateCommandPreview() {
-            const inputCsv = document.getElementById('inputCsv').value || 'contacts.csv';
+            const inputCsv = document.getElementById('inputCsvPath').value || 'contacts.csv';
             const outputCsv = document.getElementById('outputCsv').value;
             const limit = document.getElementById('limit').value;
             const resume = document.getElementById('resume').checked;
@@ -456,6 +621,10 @@
             commandPreview.textContent = command;
         }
 
+        function closeOutputModal() {
+            outputModal.classList.remove('visible');
+        }
+
         // Listen to all form changes
         form.addEventListener('input', updateCommandPreview);
         form.addEventListener('change', updateCommandPreview);
@@ -464,7 +633,7 @@
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            const inputCsv = document.getElementById('inputCsv').value;
+            const inputCsv = document.getElementById('inputCsvPath').value || 'contacts.csv';
             const outputCsv = document.getElementById('outputCsv').value;
             const limit = document.getElementById('limit').value;
             const resume = document.getElementById('resume').checked;
@@ -480,9 +649,12 @@
             if (skipEvaluation) command += ` --skip-evaluation`;
             if (verbose) command += ` --verbose`;
 
-            // Show output
-            outputDiv.classList.add('visible');
-            outputDiv.textContent = `$ ${commandPreview.textContent}\n\nExecuting...\n`;
+            // Show modal
+            outputModal.classList.add('visible');
+            modalOutput.textContent = `$ ${commandPreview.textContent}\n\nExecuting...\n`;
+            modalTitle.textContent = 'Running Outreach Bot...';
+            modalStatus.textContent = 'Processing';
+            closeModalBtn.style.display = 'none';
             runButton.classList.add('loading');
             runButton.textContent = 'Running...';
 
@@ -498,22 +670,37 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    outputDiv.textContent += `\n${data.output}\n\n✓ Completed successfully!`;
+                    modalOutput.textContent += `\n${data.output}\n\n✓ Completed successfully!`;
+                    modalTitle.textContent = 'Outreach Bot - Complete';
+                    modalStatus.textContent = 'Success';
+                    modalStatus.style.color = '#00ff41';
                 } else {
-                    outputDiv.textContent += `\n${data.error}\n\n✗ Error occurred`;
+                    modalOutput.textContent += `\n${data.error}\n\n✗ Error occurred`;
+                    modalTitle.textContent = 'Outreach Bot - Error';
+                    modalStatus.textContent = 'Failed';
+                    modalStatus.style.color = var(--accent);
                 }
             } catch (error) {
-                outputDiv.textContent += `\n\nError: ${error.message}\n\nNote: This is a frontend demo. To actually run commands, you need to set up a backend server.\n\nFor now, copy the command above and run it in your terminal.`;
+                modalOutput.textContent += `\n\nError: ${error.message}\n\nNote: This is a frontend demo. To actually run commands, you need to set up a backend server.\n\nFor now, copy the command above and run it in your terminal.`;
+                modalTitle.textContent = 'Outreach Bot - Info';
+                modalStatus.textContent = 'Manual';
+                modalStatus.style.color = var(--accent-soft);
             } finally {
                 runButton.classList.remove('loading');
                 runButton.textContent = 'Run Outreach Bot';
+                closeModalBtn.style.display = 'block';
+
+                // Remove pulsing indicator when done
+                document.querySelector('.pulse-indicator').style.display = 'none';
             }
         });
 
         function clearForm() {
             form.reset();
             document.getElementById('resume').checked = true;
+            document.getElementById('selectedFile').textContent = 'Tip: Use filename only if CSV is in /Users/echild/outreach_bot/';
             outputDiv.classList.remove('visible');
+            outputModal.classList.remove('visible');
             updateCommandPreview();
         }
 
