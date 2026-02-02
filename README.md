@@ -1,14 +1,16 @@
 # Outreach Bot
 
-AI-powered outreach email automation system. Scrapes prospect company blogs, analyzes content quality, generates personalized openers using xAI's Grok, and creates Gmail drafts.
+AI-powered outreach email automation system. Scrapes prospect company blogs, analyzes content quality, generates personalized openers using xAI's Grok, and writes results to CSV.
 
 ## Features
 
 - **Web Scraping**: Automatically finds and scrapes blog content from prospect websites
 - **Smart Caching**: SQLite-based caching with 7-day TTL for scraped content
 - **AI Generation**: Uses xAI's Grok to generate personalized email openers based on company content
+- **Quality Evaluation**: Automatically detects AI writing patterns and filters low-quality content
+- **Auto-Retry**: Tries different prompt variations if quality checks fail
 - **Template Fallback**: Falls back to templates when AI generation isn't possible
-- **Gmail Integration**: Creates drafts directly in Gmail via OAuth
+- **CSV Output**: Writes generated emails back to CSV with quality metrics
 - **Dry Run Mode**: Test 10 prompt variations in parallel on a single contact
 - **Resumable**: Automatically resumes from where it left off if interrupted
 
@@ -47,21 +49,21 @@ XAI_API_KEY=xai-xxxxx
 ### Basic Commands
 
 ```bash
-# Process all contacts and create Gmail drafts
+# Process all contacts and generate emails (outputs to contacts_with_emails.csv)
 outreach run contacts.csv
+
+# Specify custom output file
+outreach run contacts.csv --output results.csv
 
 # Process first 10 contacts only
 outreach run contacts.csv --limit 10
 
-# Generate emails without creating drafts
-outreach run contacts.csv --skip-gmail
+# Skip quality evaluation (faster but no filtering)
+outreach run contacts.csv --skip-evaluation
 
 # Test prompt variations on a single contact (dry run)
 outreach dry-run contacts.csv
 outreach dry-run contacts.csv --row-index 5
-
-# Set up Gmail OAuth
-outreach setup-gmail
 
 # Check processing status
 outreach status contacts.csv
@@ -69,6 +71,16 @@ outreach status contacts.csv
 # Clear all cached data
 outreach clear-cache
 ```
+
+### Output
+
+The system adds these columns to your CSV:
+- `generated_subject` - Email subject line
+- `generated_body` - Full email body text
+- `ai_generated` - True if AI-generated, False if template fallback
+- `quality_score` - Quality score 0-100 (if evaluation enabled)
+- `quality_acceptable` - True if passed quality checks (score ≥70)
+- `quality_issues` - Number of quality issues found
 
 ### CSV Format
 
@@ -123,13 +135,21 @@ CSV Input → Cache Check → Web Scraper → Context Analyzer
                               ↓                               ↓
                          GOOD context                   LOW-QUALITY
                               ↓                               ↓
-                      Claude AI opener              Template fallback
+                         Grok AI opener              Template fallback
                               ↓                               ↓
                               └───────────────┬───────────────┘
                                               ↓
                           Email Assembly (opener + value props)
                                               ↓
-                                       Gmail Draft
+                                    Quality Evaluator
+                                    (checks for AI patterns)
+                                              ↓
+                                    ┌─────────┴──────────┐
+                                    ↓                    ↓
+                                PASS (≥70)           FAIL (<70)
+                                    ↓                    ↓
+                              CSV Output         Retry with new
+                                              prompt or fallback
 ```
 
 ## Project Structure
@@ -146,8 +166,11 @@ outreach_bot/
 │   ├── cache/                    # SQLite caching
 │   ├── analyzer/                 # Content analysis
 │   ├── generator/                # Email generation
-│   ├── gmail/                    # Gmail integration
+│   ├── evaluator/                # Quality evaluation
+│   ├── gmail/                    # Gmail OAuth (legacy)
 │   └── dry_run/                  # Parallel testing
+├── docs/                         # Documentation
+│   └── email_evaluator.md       # Evaluator details
 ├── data/                         # Runtime data (gitignored)
 └── output/                       # Output files (gitignored)
 ```
