@@ -501,7 +501,7 @@
                     <div style="display: flex; gap: 0.5rem;">
                         <input type="text" id="inputCsvPath" name="inputCsvPath" placeholder="contacts.csv or full path" required style="flex: 1;">
                         <input type="file" id="inputCsv" name="inputCsv" accept=".csv" style="display: none;">
-                        <button type="button" onclick="document.getElementById('inputCsv').click()" style="padding: 0.75rem 1.5rem; white-space: nowrap; flex-shrink: 0;">Browse...</button>
+                        <button type="button" onclick="openFileBrowser()" style="padding: 0.75rem 1.5rem; white-space: nowrap; flex-shrink: 0;">Browse...</button>
                     </div>
                     <div id="selectedFile" style="font-size: 0.75rem; color: var(--ink-muted); margin-top: 0.5rem;">
                         Tip: Use filename only if CSV is in /Users/echild/outreach_bot/
@@ -591,13 +591,40 @@
         const modalStatus = document.getElementById('modalStatus');
         const closeModalBtn = document.getElementById('closeModalBtn');
 
+        // Open file browser
+        function openFileBrowser() {
+            console.log('Opening file browser');
+            const fileInput = document.getElementById('inputCsv');
+            if (fileInput) {
+                fileInput.click();
+            } else {
+                console.error('File input not found');
+            }
+        }
+
         // Handle file selection
-        document.getElementById('inputCsv').addEventListener('change', (e) => {
+        function handleFileSelect(e) {
+            console.log('File selected:', e.target.files);
             const file = e.target.files[0];
             if (file) {
-                document.getElementById('inputCsvPath').value = file.name;
+                console.log('File name:', file.name);
+                const inputCsvPath = document.getElementById('inputCsvPath');
+                console.log('Input element:', inputCsvPath);
+                inputCsvPath.value = file.name;
+                console.log('Set value to:', inputCsvPath.value);
                 document.getElementById('selectedFile').textContent = `Selected: ${file.name}`;
                 updateCommandPreview();
+            } else {
+                console.log('No file selected');
+            }
+        }
+
+        // Ensure event listener is attached after DOM is loaded
+        window.addEventListener('DOMContentLoaded', () => {
+            const fileInput = document.getElementById('inputCsv');
+            console.log('Attaching file input listener:', fileInput);
+            if (fileInput) {
+                fileInput.addEventListener('change', handleFileSelect);
             }
         });
 
@@ -628,6 +655,7 @@
         // Listen to all form changes
         form.addEventListener('input', updateCommandPreview);
         form.addEventListener('change', updateCommandPreview);
+        document.getElementById('inputCsvPath').addEventListener('input', updateCommandPreview);
 
         // Form submission
         form.addEventListener('submit', async (e) => {
