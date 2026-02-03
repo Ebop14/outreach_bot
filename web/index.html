@@ -709,16 +709,17 @@
             const skipEvaluation = document.getElementById('skipEvaluation').checked;
             const verbose = document.getElementById('verbose').checked;
 
-            // Build command
-            let command = `cd /Users/echild/outreach_bot && source .venv/bin/activate && python -m outreach_bot.cli run ${inputCsv}`;
-
-            if (outputCsv) command += ` --output ${outputCsv}`;
-            if (limit) command += ` --limit ${limit}`;
-            if (maxRetries && maxRetries !== '3') command += ` --max-retries ${maxRetries}`;
-            if (qualityThreshold && qualityThreshold !== '70') command += ` --quality-threshold ${qualityThreshold}`;
-            if (!resume) command += ` --no-resume`;
-            if (skipEvaluation) command += ` --skip-evaluation`;
-            if (verbose) command += ` --verbose`;
+            // Build structured parameters (NOT raw command - for security)
+            const params = {
+                inputCsv: inputCsv,
+                outputCsv: outputCsv || '',
+                limit: limit || '',
+                qualityThreshold: qualityThreshold || '70',
+                maxRetries: maxRetries || '3',
+                resume: resume,
+                skipEvaluation: skipEvaluation,
+                verbose: verbose
+            };
 
             // Show modal
             outputModal.classList.add('visible');
@@ -736,7 +737,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ command })
+                    body: JSON.stringify(params)
                 });
 
                 const data = await response.json();

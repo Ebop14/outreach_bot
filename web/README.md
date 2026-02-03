@@ -50,6 +50,18 @@ The interface features:
 - Clean, professional aesthetic
 - Terminal-style output display
 
-## Security Note
+## Security
 
-When running with the backend server, commands are executed directly on your system. Only use this on your local machine and ensure your `contacts.csv` contains no sensitive data in publicly accessible locations.
+The server implements several security measures:
+
+- **No raw command execution**: The server only accepts structured parameters (inputCsv, outputCsv, limit, etc.) and builds commands internally
+- **No shell execution**: Uses `subprocess.Popen` with `shell=False` and argument lists, eliminating shell injection entirely
+- **Input validation**: All user inputs are validated and sanitized before use
+- **Path restrictions**: CSV files must be within the project directory or user's home folder
+- **Dangerous character filtering**: File paths are checked for shell metacharacters as defense-in-depth
+- **Localhost only**: Server binds to 127.0.0.1 by default, rejecting non-localhost connections
+- **No CORS**: Cross-origin requests are denied
+- **Request size limits**: POST requests are limited to prevent abuse
+- **Directory traversal protection**: Paths are resolved and validated against allowed directories
+
+**Important**: This server is designed for local development use only. Do not expose it to the public internet.
