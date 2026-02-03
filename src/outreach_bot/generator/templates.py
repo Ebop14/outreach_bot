@@ -9,26 +9,25 @@ class TemplateManager:
 
     # Fallback openers when AI generation isn't possible
     FALLBACK_OPENERS = [
-        "I came across {company} while researching firms in your space.",
-        "Been following {company}'s work and thought I'd reach out.",
-        "{company} caught my attention recently.",
+        "I came across {company} while researching PE firms focused on operation efficiency, and thought I'd reach out..",
     ]
 
     # Value propositions to include in emails
     VALUE_PROPS = """
-I recently left Ramp, where my work saved $3M annually with an internal workflow. My co-founder built an sales tool that turned a 12-month process into a 2 day one. 
+Our co-founder Ethan Child recently left Ramp, where his work saved the sales team 1,250 hours/week and $3M annuallyi by automating manual follow-up emails. 
+Brian Ng created a sales tool that transformed a 12-month prospecting process into a 2 day one. 
 """.strip()
 
     # Email subject templates
     SUBJECT_TEMPLATES = [
         "AI opportunities for {company}",
         "Quick question about {company}'s AI strategy",
-        "Helping {company} with AI automation",
+        "Saving {company} $3M annually",
     ]
 
     # Closing template (placeholders will be replaced with CSV values if available)
     CLOSING_TEMPLATE = """
-Let me know if you'd like to chat. I think we could save a lot of time and money for your team.
+Let me know if you'd like to chat with either of our co-founders. I think that a partnership could be mutually beneficial.  
 
 Best,
 {sender_name}

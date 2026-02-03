@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -63,13 +64,27 @@ def run(
         raise typer.Exit(1)
 
     # Configure logging - always enabled, verbose adds more detail
-    log_level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(message)s",
-        handlers=[RichHandler(console=console, rich_tracebacks=True, show_time=False, show_path=False)],
-        force=True  # Override any existing config
+    log_level = logging.DEBUG if verbose else logging.WARNING
+
+    # Clear any existing handlers and configure fresh
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(log_level)
+
+    # Create RichHandler that works with Progress context
+    rich_handler = RichHandler(
+        console=console,
+        rich_tracebacks=True,
+        show_time=True if verbose else False,
+        show_path=verbose,
+        markup=True,
     )
+    rich_handler.setLevel(log_level)
+    root_logger.addHandler(rich_handler)
+
+    # Ensure logs are flushed immediately
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(line_buffering=True)
 
     # Default output path
     if output is None:
@@ -145,31 +160,37 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
             )
 
             # Process contacts
-            with Progress(
+            results_summary = {
+                "success": 0,
+                "flagged": 0,
+                "errors": 0,
+                "quality_passed": 0,
+                "quality_failed": 0,
+            }
+
+            # Use Progress bar only when not verbose (verbose mode shows detailed logs instead)
+            progress_ctx = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
                 console=console,
-            ) as progress:
-                task = progress.add_task(
+            ) if not verbose else None
+
+            if progress_ctx:
+                progress_ctx.start()
+                task = progress_ctx.add_task(
                     "Processing contacts...",
                     total=len(contacts) - start_index,
                 )
 
-                results_summary = {
-                    "success": 0,
-                    "flagged": 0,
-                    "errors": 0,
-                    "quality_passed": 0,
-                    "quality_failed": 0,
-                }
-
+            try:
                 for i, contact in enumerate(contacts[start_index:], start=start_index):
-                    progress.update(
-                        task,
-                        description=f"Processing {contact.company}...",
-                    )
+                    if progress_ctx:
+                        progress_ctx.update(
+                            task,
+                            description=f"Processing {contact.company}...",
+                        )
 
                     try:
                         console.print(f"\n[bold]━━━ Contact {i+1}/{len(contacts)}: {contact.company} ({contact.email}) ━━━[/bold]")
@@ -239,7 +260,11 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                             console.print(f"[red]{traceback.format_exc()}[/red]")
                         results_summary["errors"] += 1
 
-                    progress.advance(task)
+                    if progress_ctx:
+                        progress_ctx.advance(task)
+            finally:
+                if progress_ctx:
+                    progress_ctx.stop()
 
             # Clear progress on completion
             await cache.clear_progress(csv_hash)

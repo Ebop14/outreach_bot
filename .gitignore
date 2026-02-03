@@ -11,6 +11,7 @@ dist/
 build/
 
 # Data files (contain sensitive info)
+*.csv
 data/cache.db
 data/gmail_token.json
 data/credentials.json
@@ -22,3 +23,9 @@ output/
 .idea/
 .vscode/
 *.swp
+
+# OS
+.DS_Store
+
+# Test files
+test_1
