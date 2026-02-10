@@ -40,6 +40,8 @@ class AIOpener:
         variation_key: str = "direct_reference",
         feedback: Optional[str] = None,
         previous_opener: Optional[str] = None,
+        touch_number: int = 1,
+        previous_email: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
         """
         Generate a personalized opener using Grok.
@@ -50,15 +52,21 @@ class AIOpener:
             variation_key: Which prompt variation to use.
             feedback: Evaluation feedback from previous attempt (for retry).
             previous_opener: The previous opener that failed (for retry).
+            touch_number: Which touch in the sequence (1 = first, 2+ = follow-up).
+            previous_email: The full previous email body (for follow-ups).
 
         Returns:
             Tuple of (opener_text, error_message). One will be None.
         """
-        if not context.has_usable_content:
+        if not context.has_usable_content and touch_number == 1:
             return "", "Context not usable for AI generation"
 
         try:
-            system_prompt, user_prompt = get_prompt(variation_key, contact, context)
+            system_prompt, user_prompt = get_prompt(
+                variation_key, contact, context,
+                touch_number=touch_number,
+                previous_email=previous_email,
+            )
 
             # If feedback is provided, add it to guide the rewrite
             if feedback and previous_opener:

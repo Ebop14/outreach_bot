@@ -43,16 +43,23 @@ class EmailGenerator:
         Generate a complete email for a contact.
 
         Uses AI opener if context is good, falls back to template otherwise.
+        For T2+ touches, generates follow-up/bump emails referencing the previous email.
         Evaluates quality and retries if needed.
         """
         from outreach_bot.generator.prompts.variations import get_all_variation_keys
 
-        logger.info(f"Generating email for {contact.email}")
+        touch = contact.touch_number
+        touch_label = f"T{touch}"
+
+        logger.info(f"Generating {touch_label} email for {contact.email}")
+        logger.info(f"  Touch: {touch_label}")
         logger.info(f"  Context quality: {context.quality.value}")
         logger.info(f"  Has usable content: {context.has_usable_content}")
         logger.info(f"  Blog URL: {context.blog_url}")
         logger.info(f"  Summary length: {len(context.summary)} chars")
         logger.info(f"  Number of articles: {len(context.articles)}")
+        if touch > 1:
+            logger.info(f"  Has previous email: {bool(contact.previous_email)}")
 
         used_ai = False
         opener = ""
@@ -65,8 +72,15 @@ class EmailGenerator:
         # Cache all attempts with their scores
         cached_attempts = []
 
-        if context.quality == ContextQuality.GOOD and context.has_usable_content:
-            logger.info(f"  → Attempting AI generation for {contact.email}")
+        # For follow-ups (T2+), we can generate even without great context
+        # as long as we have the previous email to reference
+        can_use_ai = (
+            (context.quality == ContextQuality.GOOD and context.has_usable_content)
+            or (touch > 1 and contact.previous_email)
+        )
+
+        if can_use_ai:
+            logger.info(f"  → Attempting AI generation for {contact.email} ({touch_label})")
             # Try AI generation with feedback-based retries
             for attempt in range(self.max_retries + 1):
                 is_retry = attempt > 0
@@ -79,7 +93,9 @@ class EmailGenerator:
                     context,
                     prompt_variation,
                     feedback=feedback,
-                    previous_opener=previous_opener
+                    previous_opener=previous_opener,
+                    touch_number=touch,
+                    previous_email=contact.previous_email,
                 )
 
                 if not attempt_opener or error:
@@ -181,18 +197,27 @@ class EmailGenerator:
         """
         from outreach_bot.generator.prompts.variations import get_all_variation_keys
 
+        touch = contact.touch_number
         emails = []
 
-        if context.quality != ContextQuality.GOOD or not context.has_usable_content:
+        # For T2+ with previous email, we can always attempt AI even without great context
+        can_use_ai = (
+            (context.quality == ContextQuality.GOOD and context.has_usable_content)
+            or (touch > 1 and contact.previous_email)
+        )
+
+        if not can_use_ai:
             # Only generate one email with template fallback
             email = self.generate_email(contact, context)
             emails.append(email)
             return emails
 
-        # Generate with each variation
-        for variation_key in get_all_variation_keys():
+        # Generate with each variation (uses follow-up variations for T2+)
+        for variation_key in get_all_variation_keys(touch_number=touch):
             opener, error = self.ai_opener.generate_opener(
-                contact, context, variation_key
+                contact, context, variation_key,
+                touch_number=touch,
+                previous_email=contact.previous_email,
             )
 
             if opener and not error:

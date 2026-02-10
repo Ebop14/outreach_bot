@@ -17,6 +17,8 @@ class Contact:
     sender_name: Optional[str] = None
     sender_company: Optional[str] = None
     row_index: int = 0
+    touch_number: int = 1
+    previous_email: Optional[str] = None
 
     @property
     def full_name(self) -> str:
@@ -61,4 +63,6 @@ class Contact:
             sender_name=get_field(["sender_name", "Sender Name", "from_name", "your_name"]) or None,
             sender_company=get_field(["sender_company", "Sender Company", "from_company", "your_company"]) or None,
             row_index=row_index,
+            touch_number=int(get_field(["touch_number"], "1")),
+            previous_email=get_field(["previous_email"]) or None,
         )

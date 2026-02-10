@@ -140,6 +140,13 @@ def build_command_args(params: dict) -> tuple[bool, list[str] | str]:
         return False, f"Max retries error: {result}"
     retries_val = result
 
+    # Validate touch number (1-10, or empty for auto-detect)
+    touch = params.get('touch', '')
+    valid, result = validate_integer(touch, min_val=1, max_val=10)
+    if not valid:
+        return False, f"Touch error: {result}"
+    touch_val = result
+
     # Boolean flags
     resume = params.get('resume', True)
     if isinstance(resume, str):
@@ -178,6 +185,9 @@ def build_command_args(params: dict) -> tuple[bool, list[str] | str]:
 
     if retries_val != 3:
         args.extend(['--max-retries', str(retries_val)])
+
+    if touch_val is not None:
+        args.extend(['--touch', str(touch_val)])
 
     if not resume:
         args.append('--no-resume')

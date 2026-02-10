@@ -19,6 +19,7 @@ from outreach_bot.generator.ai_opener import AIOpener
 from outreach_bot.generator.templates import TemplateManager
 from outreach_bot.generator.prompts.variations import (
     PROMPT_VARIATIONS,
+    FOLLOWUP_PROMPT_VARIATIONS,
     get_all_variation_keys,
 )
 
@@ -44,13 +45,15 @@ class ParallelTester:
         Returns:
             List of result dictionaries.
         """
-        if not context.has_usable_content:
+        touch = contact.touch_number
+
+        if not context.has_usable_content and touch == 1:
             self.console.print(
                 "[yellow]Warning: Context quality is low. "
                 "AI generation may not produce good results.[/yellow]"
             )
 
-        variation_keys = get_all_variation_keys()
+        variation_keys = get_all_variation_keys(touch_number=touch)
 
         # Run all variations in parallel using thread pool
         # (anthropic SDK is sync but thread-safe)
@@ -77,10 +80,14 @@ class ParallelTester:
         context: ScrapedContext,
     ) -> dict:
         """Generate a single variation."""
-        variation_info = PROMPT_VARIATIONS[variation_key]
+        touch = contact.touch_number
+        variations = FOLLOWUP_PROMPT_VARIATIONS if touch > 1 else PROMPT_VARIATIONS
+        variation_info = variations[variation_key]
 
         opener, error = self.ai_opener.generate_opener(
-            contact, context, variation_key
+            contact, context, variation_key,
+            touch_number=touch,
+            previous_email=contact.previous_email,
         )
 
         return {

@@ -47,6 +47,33 @@ def get_csv_hash(csv_path: Path) -> str:
     return hashlib.md5(content).hexdigest()
 
 
+def detect_latest_touch(df: pd.DataFrame) -> int:
+    """Detect the highest touch level that has data in the CSV.
+
+    Scans for t1_body, t2_body, ... columns (and legacy generated_body)
+    and returns the highest N where tN_body has any non-empty values.
+    Returns 0 if no touch data exists yet.
+    """
+    # Check legacy column
+    latest = 0
+    if "generated_body" in df.columns:
+        has_data = df["generated_body"].notna() & (df["generated_body"].astype(str).str.strip() != "")
+        if has_data.any():
+            latest = 1
+
+    # Check t1_body, t2_body, ... up to a reasonable limit
+    for n in range(1, 20):
+        col = f"t{n}_body"
+        if col in df.columns:
+            has_data = df[col].notna() & (df[col].astype(str).str.strip() != "")
+            if has_data.any():
+                latest = n
+        else:
+            break
+
+    return latest
+
+
 @app.command()
 def run(
     csv_path: Path = typer.Argument(..., help="Path to contacts CSV file"),
@@ -56,12 +83,25 @@ def run(
     skip_evaluation: bool = typer.Option(False, "--skip-evaluation", help="Skip quality evaluation"),
     max_retries: int = typer.Option(3, "--max-retries", "-r", help="Max retries with feedback for quality improvement (default: 3)"),
     quality_threshold: int = typer.Option(70, "--quality-threshold", "-q", help="Minimum quality score 0-100 to accept (default: 70)"),
+    touch: Optional[int] = typer.Option(None, "--touch", "-t", help="Override touch number (default: auto-detect next touch from CSV)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ):
     """Process contacts and generate emails, writing results to CSV."""
     if not csv_path.exists():
         console.print(f"[red]Error: CSV file not found: {csv_path}[/red]")
         raise typer.Exit(1)
+
+    if touch is not None and touch < 1:
+        console.print(f"[red]Error: Touch number must be >= 1[/red]")
+        raise typer.Exit(1)
+
+    # Auto-detect touch level from CSV if not specified
+    if touch is None:
+        df_peek = pd.read_csv(csv_path, encoding='utf-8')
+        latest = detect_latest_touch(df_peek)
+        touch = latest + 1
+        if latest > 0:
+            console.print(f"[cyan]Auto-detected T{latest} data in CSV. Generating T{touch} (follow-up #{touch - 1}).[/cyan]")
 
     # Configure logging - always enabled, verbose adds more detail
     log_level = logging.DEBUG if verbose else logging.WARNING
@@ -90,19 +130,21 @@ def run(
     if output is None:
         output = csv_path.parent / f"{csv_path.stem}_with_emails.csv"
 
+    touch_label = f"T{touch}"
     console.print("\n[bold cyan]🤖 Outreach Bot Starting...[/bold cyan]\n")
     console.print(f"[dim]Input:[/dim]  {csv_path}")
     console.print(f"[dim]Output:[/dim] {output}")
+    console.print(f"[dim]Touch:[/dim]  {touch_label}" + (" (first outreach)" if touch == 1 else f" (follow-up #{touch - 1})"))
     console.print(f"[dim]Quality threshold:[/dim] {quality_threshold}/100")
     console.print(f"[dim]Max retries:[/dim] {max_retries}")
     if skip_evaluation:
         console.print(f"[yellow]⚠ Quality evaluation disabled[/yellow]")
     console.print()
 
-    asyncio.run(_run_async(csv_path, limit, output, resume, skip_evaluation, max_retries, quality_threshold, verbose))
+    asyncio.run(_run_async(csv_path, limit, output, resume, skip_evaluation, max_retries, quality_threshold, verbose, touch))
 
 
-async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, resume: bool, skip_evaluation: bool, max_retries: int, quality_threshold: int, verbose: bool):
+async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, resume: bool, skip_evaluation: bool, max_retries: int, quality_threshold: int, verbose: bool, touch: int = 1):
     """Async implementation of run command."""
     logger = logging.getLogger(__name__)
     # Load original CSV as DataFrame to preserve all columns
@@ -120,23 +162,73 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
         df = df.iloc[:limit].copy()
         console.print(f"[dim]Limiting to first {limit} contacts[/dim]")
 
+    # For T2+, read previous email from the prior touch's columns
+    if touch > 1:
+        prev_touch = touch - 1
+        prev_body_col = f"t{prev_touch}_body"
+        # Also check legacy column name for T1
+        if prev_body_col not in df.columns and prev_touch == 1 and "generated_body" in df.columns:
+            prev_body_col = "generated_body"
+
+        if prev_body_col not in df.columns:
+            console.print(f"[red]Error: Cannot find previous touch column '{prev_body_col}' in CSV.[/red]")
+            console.print(f"[red]Run touch {prev_touch} first, or ensure the CSV has the previous email data.[/red]")
+            return
+
+        # Inject previous_email into contacts, skip those missing a previous email
+        contacts_with_previous = []
+        skipped = 0
+        for contact in contacts:
+            contact.touch_number = touch
+            prev_val = df.at[contact.row_index, prev_body_col] if contact.row_index < len(df) else None
+            if pd.notna(prev_val) and str(prev_val).strip():
+                contact.previous_email = str(prev_val).strip()
+                contacts_with_previous.append(contact)
+            else:
+                skipped += 1
+
+        if skipped > 0:
+            console.print(f"[yellow]⚠ Skipping {skipped} contact(s) with no T{prev_touch} email in '{prev_body_col}'[/yellow]")
+
+        contacts = contacts_with_previous
+        if not contacts:
+            console.print(f"[red]Error: No contacts have a previous email in '{prev_body_col}'. Nothing to follow up on.[/red]")
+            return
+
+        console.print(f"[green]✓ Loaded previous emails from '{prev_body_col}' for {len(contacts)} contact(s)[/green]")
+    else:
+        for contact in contacts:
+            contact.touch_number = 1
+
     console.print(f"[green]✓ Loaded {len(contacts)} contacts[/green]\n")
 
     csv_hash = get_csv_hash(csv_path)
 
-    # Initialize new columns if they don't exist
-    if "generated_subject" not in df.columns:
-        df["generated_subject"] = ""
-    if "generated_body" not in df.columns:
-        df["generated_body"] = ""
-    if "ai_generated" not in df.columns:
-        df["ai_generated"] = ""
-    if "quality_score" not in df.columns:
-        df["quality_score"] = ""
-    if "quality_acceptable" not in df.columns:
-        df["quality_acceptable"] = ""
-    if "quality_issues" not in df.columns:
-        df["quality_issues"] = ""
+    # Touch-prefixed column names
+    t_prefix = f"t{touch}"
+    col_touch = "touch"
+    col_subject = f"{t_prefix}_subject"
+    col_body = f"{t_prefix}_body"
+    col_ai = f"{t_prefix}_ai_generated"
+    col_score = f"{t_prefix}_quality_score"
+    col_acceptable = f"{t_prefix}_quality_acceptable"
+    col_issues = f"{t_prefix}_quality_issues"
+
+    # Initialize touch column and touch-specific columns if they don't exist
+    if col_touch not in df.columns:
+        df[col_touch] = ""
+    if col_subject not in df.columns:
+        df[col_subject] = ""
+    if col_body not in df.columns:
+        df[col_body] = ""
+    if col_ai not in df.columns:
+        df[col_ai] = ""
+    if col_score not in df.columns:
+        df[col_score] = ""
+    if col_acceptable not in df.columns:
+        df[col_acceptable] = ""
+    if col_issues not in df.columns:
+        df[col_issues] = ""
 
     # Initialize components
     async with SQLiteCache() as cache:
@@ -193,7 +285,15 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                         )
 
                     try:
-                        console.print(f"\n[bold]━━━ Contact {i+1}/{len(contacts)}: {contact.company} ({contact.email}) ━━━[/bold]")
+                        touch_info = f" [T{touch}]" if touch > 1 else ""
+                        console.print(f"\n[bold]━━━ Contact {i+1}/{len(contacts)}: {contact.company} ({contact.email}){touch_info} ━━━[/bold]")
+
+                        # Skip contacts missing a previous email for follow-ups
+                        if touch > 1 and not contact.previous_email:
+                            console.print(f"[yellow]   ⚠ Skipped -- no previous email for follow-up[/yellow]")
+                            if progress_ctx:
+                                progress_ctx.advance(task)
+                            continue
 
                         # Get context
                         console.print(f"[cyan]🌐 Fetching website content from {contact.website}...[/cyan]")
@@ -221,16 +321,17 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
                             status_color = "green" if acceptable else "yellow"
                             console.print(f"[{status_color}]   {status_icon} Quality score: {score}/{quality_threshold}[/{status_color}]")
 
-                        # Write to DataFrame
-                        df.at[contact.row_index, "generated_subject"] = email.subject
-                        df.at[contact.row_index, "generated_body"] = email.body
-                        df.at[contact.row_index, "ai_generated"] = str(email.used_ai_opener)
+                        # Write to DataFrame with touch-prefixed columns
+                        df.at[contact.row_index, col_touch] = f"T{touch}"
+                        df.at[contact.row_index, col_subject] = email.subject
+                        df.at[contact.row_index, col_body] = email.body
+                        df.at[contact.row_index, col_ai] = str(email.used_ai_opener)
 
                         # Add evaluation results if available
                         if email.evaluation:
-                            df.at[contact.row_index, "quality_score"] = str(email.evaluation.quality_score)
-                            df.at[contact.row_index, "quality_acceptable"] = str(email.evaluation.is_acceptable)
-                            df.at[contact.row_index, "quality_issues"] = str(len(email.evaluation.issues))
+                            df.at[contact.row_index, col_score] = str(email.evaluation.quality_score)
+                            df.at[contact.row_index, col_acceptable] = str(email.evaluation.is_acceptable)
+                            df.at[contact.row_index, col_issues] = str(len(email.evaluation.issues))
 
                             # Track quality stats
                             if email.evaluation.is_acceptable:
@@ -271,7 +372,8 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
 
             # Print summary
             console.print("\n[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
-            console.print("[bold cyan]📊 Processing Complete![/bold cyan]\n")
+            touch_desc = "first outreach" if touch == 1 else f"follow-up #{touch - 1}"
+            console.print(f"[bold cyan]📊 Processing Complete! (T{touch} - {touch_desc})[/bold cyan]\n")
 
             console.print(f"[green]✓ Successfully processed:[/green] {results_summary['success']}")
             if results_summary['flagged'] > 0:
@@ -320,18 +422,28 @@ async def _run_async(csv_path: Path, limit: Optional[int], output_path: Path, re
 def dry_run(
     csv_path: Path = typer.Argument(..., help="Path to contacts CSV file"),
     row_index: int = typer.Option(0, "--row-index", "-r", help="Row index to test (0-based)"),
+    touch: Optional[int] = typer.Option(None, "--touch", "-t", help="Override touch number (default: auto-detect next touch from CSV)"),
 ):
     """Test all prompt variations on a single contact."""
     if not csv_path.exists():
         console.print(f"[red]Error: CSV file not found: {csv_path}[/red]")
         raise typer.Exit(1)
 
-    asyncio.run(_dry_run_async(csv_path, row_index))
+    # Auto-detect touch level
+    if touch is None:
+        df_peek = pd.read_csv(csv_path, encoding='utf-8')
+        latest = detect_latest_touch(df_peek)
+        touch = latest + 1
+        if latest > 0:
+            console.print(f"[cyan]Auto-detected T{latest} data in CSV. Testing T{touch} variations.[/cyan]")
+
+    asyncio.run(_dry_run_async(csv_path, row_index, touch))
 
 
-async def _dry_run_async(csv_path: Path, row_index: int):
+async def _dry_run_async(csv_path: Path, row_index: int, touch: int = 1):
     """Async implementation of dry-run command."""
     # Load contacts
+    df = pd.read_csv(csv_path, encoding='utf-8')
     contacts = load_contacts(csv_path)
     if not contacts:
         console.print("[red]Error: No valid contacts found in CSV[/red]")
@@ -342,7 +454,27 @@ async def _dry_run_async(csv_path: Path, row_index: int):
         return
 
     contact = contacts[row_index]
-    console.print(f"[cyan]Testing contact: {contact.full_name} at {contact.company}[/cyan]")
+    contact.touch_number = touch
+
+    # For T2+, read previous email from CSV
+    if touch > 1:
+        prev_touch = touch - 1
+        prev_body_col = f"t{prev_touch}_body"
+        if prev_body_col not in df.columns and prev_touch == 1 and "generated_body" in df.columns:
+            prev_body_col = "generated_body"
+
+        if prev_body_col in df.columns:
+            prev_val = df.at[contact.row_index, prev_body_col]
+            if pd.notna(prev_val) and str(prev_val).strip():
+                contact.previous_email = str(prev_val).strip()
+                console.print(f"[green]✓ Loaded previous email from '{prev_body_col}'[/green]")
+            else:
+                console.print(f"[yellow]⚠ No previous email found in '{prev_body_col}' for this contact[/yellow]")
+        else:
+            console.print(f"[yellow]⚠ Column '{prev_body_col}' not found in CSV[/yellow]")
+
+    touch_label = f"T{touch}"
+    console.print(f"[cyan]Testing contact: {contact.full_name} at {contact.company} ({touch_label})[/cyan]")
 
     async with SQLiteCache() as cache:
         async with Fetcher() as fetcher:
@@ -358,7 +490,7 @@ async def _dry_run_async(csv_path: Path, row_index: int):
 
             # Run parallel tests
             tester = ParallelTester()
-            with console.status("Running prompt variations in parallel..."):
+            with console.status(f"Running {touch_label} prompt variations in parallel..."):
                 results = await tester.test_all_variations(contact, context)
 
             # Display and save results

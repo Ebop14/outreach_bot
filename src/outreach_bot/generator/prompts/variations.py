@@ -1,10 +1,12 @@
 """Prompt variations for AI opener generation."""
 
+from typing import Optional
+
 from outreach_bot.models.contact import Contact
 from outreach_bot.models.context import ScrapedContext
 
 
-# Base system prompt
+# Base system prompt for first touch (T1)
 SYSTEM_PROMPT = """You are an experienced Sales Development Representative copywriting cold email openers for an AI consultancy, Snaptask. Your openers should:
 - Be 2-3 sentences maximum
 - Reference something specific from the company's content
@@ -12,12 +14,38 @@ SYSTEM_PROMPT = """You are an experienced Sales Development Representative copyw
 - Create a natural bridge to discussing AI solutions
 - Never use generic phrases like "I was impressed by" or "I noticed that"
 - Never start the email with Hi {Name} or Hey {Name}. This info has already been written.
+- NEVER use em dashes.
+- Avoid idiomatic causative construction for sentences.
+- Don't use the passive voice. Always use the active voice.
+- NEVER use rehtorical questions. They are cliche.
 Output ONLY the opener text, nothing else.
 Reference the following factoids for a source-of-truth for things that Snaptask's founders have accomplished:
-- Ethan Child, a co-founder, launched a tool that saved Ramp's sales team $3 Million annually by automating manual follow-ups, a tasks that took around 1,250 hours a week.
-- Brian Ng, a co-founder, created a sales prospecting tool that transformed a 12-month sales process into a 2 day one. 
+- Ethan Child created a tool that saved Ramp's sales team $3 Million annually by automating manual follow-ups, a tasks that took around 1,250 hours a week.
+- Brian Ng, a co-founder, created a sales prospecting tool that transformed a 12-month sales process into a 2 day one.
 - Brian Ng, a co-founder, built an internal data management tool that reduced 90% overhead and eliminated 3 roles.
+Write your email taking into account that these lines will come right after:
+
+I recently left Ramp, where my work saved the sales team 1,250 hours/week and $3M annually by automating manual follow-up emails.
+My co-founder, Brian Ng created a sales tool that transformed a 12-month prospecting process into a 2 day one.
+Let me know if you'd like to chat. I think that a partnership could be mutually beneficial.
 """
+
+# System prompt for follow-up touches (T2+)
+FOLLOWUP_SYSTEM_PROMPT = """You are an experienced Sales Development Representative writing a follow-up email opener for an AI consultancy, Snaptask. This is touch #{touch_number} in a sequence -- the prospect has already received a previous email but hasn't replied.
+
+Your follow-up opener should:
+- Be 1-3 sentences maximum
+- Feel natural and human, like a real follow-up
+- NOT repeat the same pitch or value props from the previous email
+- Add a new angle, insight, or reason to reply
+- Never be guilt-trippy or passive-aggressive
+- Never start with "Hi {Name}" or "Hey {Name}" -- the greeting is already written
+- NEVER use em dashes
+- Don't use the passive voice. Always use the active voice.
+- NEVER use rhetorical questions
+- Be shorter and more casual than the first touch
+Output ONLY the follow-up opener text, nothing else.
+The email will only have a short closing after your opener -- no value props will be repeated."""
 
 
 # 10 prompt variations for dry run testing
@@ -125,17 +153,117 @@ Be extremely concise - just one punchy sentence that references their content an
 }
 
 
+# Follow-up prompt variations for T2+
+FOLLOWUP_PROMPT_VARIATIONS = {
+    "gentle_bump": {
+        "name": "Gentle Bump",
+        "description": "Simple, friendly follow-up",
+        "template": """Write a follow-up email opener for {first_name} at {company}.
+
+This is touch #{touch_number}. Here is the previous email that was sent:
+---
+{previous_email}
+---
+
+Write a brief, friendly follow-up that gives them a new reason to respond. Don't repeat what was already said.""",
+    },
+    "new_angle": {
+        "name": "New Angle",
+        "description": "Approach from a different angle than the first email",
+        "template": """Write a follow-up email opener for {first_name} at {company}.
+
+This is touch #{touch_number}. Here is the previous email:
+---
+{previous_email}
+---
+
+Their recent content:
+{summary}
+
+Come at this from a completely different angle than the previous email. Find a new connection between their work and AI automation.""",
+    },
+    "value_add": {
+        "name": "Value Add",
+        "description": "Share something valuable or relevant",
+        "template": """Write a follow-up email opener for {first_name} at {company}.
+
+This is touch #{touch_number}. Here is the previous email:
+---
+{previous_email}
+---
+
+Their content discusses:
+{summary}
+
+Share a brief, relevant insight or observation about their industry and AI that adds value, even if they don't reply.""",
+    },
+    "direct_ask": {
+        "name": "Direct Ask",
+        "description": "Be direct about wanting to connect",
+        "template": """Write a follow-up email opener for {first_name} at {company}.
+
+This is touch #{touch_number}. Here is the previous email:
+---
+{previous_email}
+---
+
+Be direct and concise. Acknowledge you've reached out before and make a clear, simple ask for a brief conversation. No fluff.""",
+    },
+    "breakup": {
+        "name": "Breakup",
+        "description": "Final touch -- closing the loop respectfully",
+        "template": """Write a final follow-up email opener for {first_name} at {company}.
+
+This is touch #{touch_number} (likely the last). Here is the previous email:
+---
+{previous_email}
+---
+
+Write a respectful "closing the loop" message. Make it clear this is the last follow-up, but leave the door open. Keep it short and genuine.""",
+    },
+}
+
+
 def get_prompt(
     variation_key: str,
     contact: Contact,
     context: ScrapedContext,
+    touch_number: int = 1,
+    previous_email: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     Get a formatted prompt for a specific variation.
 
+    Args:
+        variation_key: Which prompt variation to use.
+        contact: The contact to generate for.
+        context: Scraped context about the company.
+        touch_number: Which touch in the sequence (1 = first, 2 = follow-up, etc.)
+        previous_email: The previous email body (required for touch_number > 1).
+
     Returns:
         Tuple of (system_prompt, user_prompt).
     """
+    if touch_number > 1 and previous_email:
+        # Follow-up touch
+        if variation_key not in FOLLOWUP_PROMPT_VARIATIONS:
+            # Default to gentle_bump if the variation key doesn't exist in follow-ups
+            variation_key = "gentle_bump"
+
+        variation = FOLLOWUP_PROMPT_VARIATIONS[variation_key]
+        system_prompt = FOLLOWUP_SYSTEM_PROMPT.format(touch_number=touch_number)
+
+        user_prompt = variation["template"].format(
+            first_name=contact.first_name,
+            company=contact.company,
+            summary=context.summary,
+            touch_number=touch_number,
+            previous_email=previous_email,
+        )
+
+        return system_prompt, user_prompt
+
+    # First touch (T1) -- original behavior
     if variation_key not in PROMPT_VARIATIONS:
         raise ValueError(f"Unknown prompt variation: {variation_key}")
 
@@ -150,6 +278,8 @@ def get_prompt(
     return SYSTEM_PROMPT, user_prompt
 
 
-def get_all_variation_keys() -> list[str]:
-    """Get all prompt variation keys."""
+def get_all_variation_keys(touch_number: int = 1) -> list[str]:
+    """Get all prompt variation keys for the given touch number."""
+    if touch_number > 1:
+        return list(FOLLOWUP_PROMPT_VARIATIONS.keys())
     return list(PROMPT_VARIATIONS.keys())
